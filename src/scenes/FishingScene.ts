@@ -46,7 +46,8 @@ type Phase = 'idle' | 'charging' | 'casting' | 'waiting' | 'bite' | 'reeling' | 
 type MobileControl =
   | { type: 'move'; x: number; y: number }
   | { type: 'fish'; pressed: boolean }
-  | { type: 'action'; action: 'map' | 'bag' | 'bait' | 'book' | 'interact' | 'boat' | 'tent' };
+  | { type: 'chat-submit'; id: number; text: string }
+  | { type: 'action'; action: 'map' | 'bag' | 'bait' | 'book' | 'interact' | 'boat' | 'tent' | 'chat' | 'closeChat' };
 
 const SPEED = 62;
 const CAST_TIME = 0.5;
@@ -90,6 +91,14 @@ export class FishingScene extends Phaser.Scene {
       this.mobileFishHeld = control.pressed;
       return;
     }
+    if (control.type === 'chat-submit') {
+      const sent = net.sendChat(control.text);
+      window.dispatchEvent(new CustomEvent('pixel-fishing:chat-send-result', { detail: { id: control.id, sent } }));
+      if (!sent) {
+        window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-status', { detail: { text: 'World chat is reconnecting. Please try again.' } }));
+      }
+      return;
+    }
     switch (control.action) {
       case 'map': this.openMap(); break;
       case 'bag': this.toggleBag(); break;
@@ -98,6 +107,8 @@ export class FishingScene extends Phaser.Scene {
       case 'interact': this.interact(); break;
       case 'boat': this.placeBoat(); break;
       case 'tent': this.placeTent(); break;
+      case 'chat': this.openChat(); break;
+      case 'closeChat': this.closeChat(); break;
     }
   };
 
@@ -167,6 +178,7 @@ export class FishingScene extends Phaser.Scene {
 
   create(): void {
     document.body.dataset.scene = 'Fishing';
+    delete document.body.dataset.worldChatOpen;
     window.addEventListener('pixel-fishing:mobile-control', this.onMobileControl);
     this.uiCam = undefined;
     this.layout();
@@ -276,6 +288,7 @@ export class FishingScene extends Phaser.Scene {
 
     this.events.once('shutdown', () => {
       window.removeEventListener('pixel-fishing:mobile-control', this.onMobileControl);
+      delete document.body.dataset.worldChatOpen;
       if (document.body.dataset.scene === 'Fishing') delete document.body.dataset.scene;
       this.scale.off('resize', this.layout, this);
       kb.off('keydown-B', this.toggleBait, this);
@@ -1052,6 +1065,13 @@ export class FishingScene extends Phaser.Scene {
       }),
       net.onEmote((id, e) => id === net.selfId && this.selfBubble?.show(EMOTE_GLYPH[e] ?? '?', this.now(), 2500)),
       net.onChat((id, _name, text) => id === net.selfId && this.selfBubble?.show(text, this.now(), 5000)),
+      net.onWorldChat((message) => {
+        window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-message', { detail: message }));
+      }),
+      net.onWorldChatStatus((online) => {
+        const text = online ? 'World chat connected.' : net.online ? 'World chat is reconnecting…' : 'Connect to the game server to use world chat.';
+        window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-status', { detail: { text } }));
+      }),
     );
 
     const token = getGameToken();
@@ -1106,47 +1126,21 @@ export class FishingScene extends Phaser.Scene {
 
   /** A text box over the game: Enter sends, Escape cancels. The server cleans and rate-limits it. */
   private openChat(): void {
-    if (this.chatInput || this.phase === 'result') return;
-    this.input.keyboard?.resetKeys(); // keys held now would otherwise stay "down" while typing
-    const el = document.createElement('input');
-    el.type = 'text';
-    el.maxLength = 80;
-    el.autocomplete = 'off';
-    el.placeholder = 'Say something...  (Enter to send, Esc to cancel)';
-    Object.assign(el.style, {
-      position: 'fixed',
-      left: '50%',
-      bottom: '9%',
-      transform: 'translateX(-50%)',
-      width: 'min(520px, 80vw)',
-      padding: '8px 10px',
-      font: '14px monospace',
-      color: '#fff4d6',
-      background: '#2b1d10',
-      border: '2px solid #d9b074',
-      outline: 'none',
-      zIndex: '10',
-    });
-    // keep typing away from the game's own key handlers (space, f, m, ... must not trigger anything)
-    el.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter') {
-        net.sendChat(el.value);
-        this.closeChat();
-      } else if (e.key === 'Escape') {
-        this.closeChat();
-      }
-    });
-    el.addEventListener('keyup', (e) => e.stopPropagation());
-    document.body.appendChild(el);
-    el.focus();
-    this.chatInput = el;
+    if (this.chatInput) return this.closeChat();
+    if (this.phase === 'result') return;
+    this.input.keyboard?.resetKeys();
+    this.chatInput = document.getElementById('world-chat-input') as HTMLInputElement | null;
+    document.body.dataset.worldChatOpen = 'true';
+    const text = net.worldChatOnline ? 'Chat with anglers on every map.' : net.online ? 'World chat is connecting…' : 'Connect to the game server to use world chat.';
+    window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-status', { detail: { text } }));
+    window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-open'));
   }
 
   private closeChat(): void {
     if (!this.chatInput) return;
-    this.chatInput.remove();
     this.chatInput = null;
+    delete document.body.dataset.worldChatOpen;
+    window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-close'));
     this.input.keyboard?.resetKeys();
   }
 

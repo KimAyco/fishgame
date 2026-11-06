@@ -37,7 +37,10 @@ export class NetClient {
 
   private client: Client | null = null;
   private room: Room | null = null;
+  private worldChatRoom: Room | null = null;
   private attempt = 0;
+  private worldChatAttempt = 0;
+  private worldChatRetry: ReturnType<typeof setTimeout> | null = null;
   private lastJoin: JoinOptions | null = null;
   private positionProvider: (() => { x: number; y: number }) | null = null;
   private timers: ReturnType<typeof setTimeout>[] = [];
@@ -46,6 +49,8 @@ export class NetClient {
   private statusListeners = new Set<Listener<NetStatus>>();
   private emoteListeners = new Set<(id: string, e: number) => void>();
   private chatListeners = new Set<(id: string, name: string, text: string) => void>();
+  private worldChatListeners = new Set<(message: { id: string; name: string; text: string; at: number }) => void>();
+  private worldChatStatusListeners = new Set<Listener<boolean>>();
   private correctListeners = new Set<Listener<{ x: number; y: number }>>();
 
   get enabled(): boolean {
@@ -54,6 +59,10 @@ export class NetClient {
 
   get online(): boolean {
     return this.status === 'online' && this.room !== null;
+  }
+
+  get worldChatOnline(): boolean {
+    return this.worldChatRoom !== null && this.online;
   }
 
   /** This player's id in the room, once joined. */
@@ -98,6 +107,7 @@ export class NetClient {
           return;
         }
         this.attach(room);
+        void this.joinWorldChat(opts.token, attempt);
         return;
       } catch (e) {
         if (attempt !== this.attempt) return;
@@ -198,10 +208,50 @@ export class NetClient {
   private dropRoom(): void {
     const room = this.room;
     this.room = null;
+    this.worldChatAttempt++;
+    if (this.worldChatRetry) clearTimeout(this.worldChatRetry);
+    this.worldChatRetry = null;
+    const worldChatRoom = this.worldChatRoom;
+    this.worldChatRoom = null;
+    this.setWorldChatStatus(false);
+    if (worldChatRoom) worldChatRoom.leave(true).catch(() => undefined);
     this.clearTimers();
     unsyncClock();
     this.rtt = 0;
     if (room) room.leave(true).catch(() => undefined);
+  }
+
+  private async joinWorldChat(token: string, attempt: number): Promise<void> {
+    const client = this.client;
+    if (!client || attempt !== this.attempt || !this.online) return;
+    if (this.worldChatRoom) return;
+    this.setWorldChatStatus(false);
+    const chatAttempt = ++this.worldChatAttempt;
+    try {
+      const room = await client.joinOrCreate('world-chat', { token });
+      if (attempt !== this.attempt || chatAttempt !== this.worldChatAttempt || !this.online) {
+        room.leave(true).catch(() => undefined);
+        return;
+      }
+      this.worldChatRoom = room;
+      this.setWorldChatStatus(true);
+      room.onMessage('world-chat', (message: { id: string; name: string; text: string; at: number }) => {
+        if (this.worldChatRoom === room) this.worldChatListeners.forEach((listener) => listener(message));
+      });
+      room.onLeave((code) => {
+        if (this.worldChatRoom !== room) return;
+        this.worldChatRoom = null;
+        this.setWorldChatStatus(false);
+        if (attempt !== this.attempt || !this.online || code === 1000 || code === 4000) return;
+        this.worldChatRetry = setTimeout(() => void this.joinWorldChat(token, attempt), 1500);
+      });
+      room.onError((code, message) => console.warn('[net] world chat error', code, message));
+    } catch (error) {
+      if (attempt !== this.attempt || chatAttempt !== this.worldChatAttempt || !this.online) return;
+      this.setWorldChatStatus(false);
+      console.warn('[net] world chat unavailable', error);
+      this.worldChatRetry = setTimeout(() => void this.joinWorldChat(token, attempt), 5000);
+    }
   }
 
   private clearTimers(): void {
@@ -225,8 +275,12 @@ export class NetClient {
     if (this.online) this.room!.send('emote', { e });
   }
 
-  sendChat(text: string): void {
-    if (this.online && text.trim()) this.room!.send('chat', { text });
+  sendChat(text: string): boolean {
+    if (!this.online || !text.trim()) return false;
+    if (!this.worldChatRoom) return false;
+    this.room!.send('chat', { text });
+    this.worldChatRoom.send('chat', { text });
+    return true;
   }
 
   // ---- reading -----------------------------------------------------------------------------------
@@ -256,6 +310,21 @@ export class NetClient {
   onChat(fn: (id: string, name: string, text: string) => void): () => void {
     this.chatListeners.add(fn);
     return () => this.chatListeners.delete(fn);
+  }
+
+  onWorldChat(fn: (message: { id: string; name: string; text: string; at: number }) => void): () => void {
+    this.worldChatListeners.add(fn);
+    return () => this.worldChatListeners.delete(fn);
+  }
+
+  onWorldChatStatus(fn: Listener<boolean>): () => void {
+    this.worldChatStatusListeners.add(fn);
+    fn(this.worldChatOnline);
+    return () => this.worldChatStatusListeners.delete(fn);
+  }
+
+  private setWorldChatStatus(online: boolean): void {
+    this.worldChatStatusListeners.forEach((listener) => listener(online));
   }
 
   /** The server moved you back because a position update was too fast to be walking. */

@@ -10,7 +10,8 @@ over a realtime Colyseus server.
     npm run dev          # http://localhost:5173 (or the next free port)
 
 Controls: WASD or arrows to walk, SPACE to cast (hold and release), hook and reel, and to open the shop
-at its door. B changes bait, F opens the fish book, M the world map. Online: 1 to 4 for emotes, Enter to chat.
+at its door. B changes bait, F opens the fish book, M the world map. Online: 1 to 4 for emotes, Enter
+or the mobile Chat button opens world chat.
 
 Single-player works on its own. Online play needs the server in the `colysues` repo.
 
@@ -29,7 +30,7 @@ who type the same code share a private room) and an **Online** switch. Everythin
 say to each other is documented in the server's README ("realtime player API").
 
 What other players see of you: where you stand, the way you face, walking, your name, your fishing rod
-and float, emotes and chat. Your catches, coins and gear stay in your own browser save.
+and float, and emotes. World chat is shared across every map. Your catches, coins and gear stay in your own browser save.
 
 The free Render tier sleeps when idle, so the first connection after a quiet spell can take up to a
 minute. The title screen wakes it as soon as it opens, and the game keeps trying and tells you so.

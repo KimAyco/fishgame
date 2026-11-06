@@ -118,6 +118,75 @@
           #mobile-shortcuts { gap: 4px; }
           #mobile-shortcuts button { min-width: 38px; min-height: 36px; }
         }
+      }
+        #world-chat-panel {
+          display: none;
+          position: fixed;
+          z-index: 30;
+          top: 50%;
+          left: 50%;
+          width: min(390px, calc(100vw - 28px));
+          height: min(440px, 62dvh);
+          transform: translate(-50%, -50%);
+          flex-direction: column;
+          gap: 8px;
+          padding: 12px;
+          border: 2px solid #d9b074;
+          border-radius: 12px;
+          background: rgba(37, 26, 18, .97);
+          color: #fff4d6;
+          font: 13px/1.35 system-ui, sans-serif;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, .6);
+          pointer-events: auto;
+        }
+        body[data-world-chat-open="true"][data-scene="Fishing"] #world-chat-panel { display: flex; }
+        #world-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        #world-chat-title { font-weight: 700; }
+        #world-chat-close {
+          min-width: 38px;
+          min-height: 36px;
+          padding: 0;
+          border: 1px solid rgba(255, 233, 196, .75);
+          border-radius: 8px;
+          background: rgba(36, 31, 28, .9);
+          color: inherit;
+          font: inherit;
+          touch-action: manipulation;
+        }
+        #world-chat-messages {
+          flex: 1;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding: 8px;
+          border: 1px solid rgba(217, 176, 116, .55);
+          border-radius: 8px;
+          background: rgba(9, 14, 23, .72);
+          overflow-wrap: anywhere;
+        }
+        .world-chat-message { margin: 0 0 7px; }
+        .world-chat-name { color: #a6e36a; font-weight: 700; }
+        #world-chat-form { display: flex; gap: 6px; }
+        #world-chat-input {
+          flex: 1;
+          min-width: 0;
+          padding: 9px;
+          border: 1px solid #d9b074;
+          border-radius: 8px;
+          background: #2b1d10;
+          color: #fff4d6;
+          font: inherit;
+          font-size: 16px;
+        }
+        #world-chat-form button {
+          min-width: 60px;
+          padding: 0 10px;
+          border: 1px solid #d9b074;
+          border-radius: 8px;
+          background: #6b4a2a;
+          color: inherit;
+          font: inherit;
+          touch-action: manipulation;
+        }
         @media (orientation: landscape) and (max-height: 500px) {
           #mobile-shortcuts { top: max(46px, calc(env(safe-area-inset-top) + 40px)); }
           #mobile-bottom { bottom: max(6px, env(safe-area-inset-bottom)); }
@@ -126,7 +195,6 @@
           #mobile-actions button { min-width: 50px; min-height: 44px; }
           #mobile-actions [data-mobile-action="fish"] { min-height: 48px; }
         }
-      }
     </style>
   </head>
   <body>
@@ -147,17 +215,40 @@
           <button type="button" data-mobile-action="interact" aria-label="Interact or use">Use</button>
           <button type="button" data-mobile-action="boat" aria-label="Place boat">Boat</button>
           <button type="button" data-mobile-action="tent" aria-label="Place tent">Tent</button>
+          <button type="button" data-mobile-action="chat" aria-label="Open world chat">Chat</button>
         </div>
       </div>
     </div>
+    <section id="world-chat-panel" role="dialog" aria-modal="true" aria-labelledby="world-chat-title" aria-hidden="true">
+      <header id="world-chat-header">
+        <div>
+          <div id="world-chat-title">World chat</div>
+          <small>Chat with anglers on every map</small>
+        </div>
+        <button type="button" id="world-chat-close" aria-label="Close world chat">Close</button>
+      </header>
+      <div id="world-chat-messages" role="log" aria-live="polite">
+        <p id="world-chat-empty">Connecting to world chat…</p>
+      </div>
+      <form id="world-chat-form">
+        <input id="world-chat-input" type="text" maxlength="80" autocomplete="off" placeholder="Say something…" aria-label="World chat message" />
+        <button type="submit">Send</button>
+      </form>
+    </section>
     <script type="module" src="/src/main.ts"></script>
     <script>
       (() => {
         const emit = (detail) => window.dispatchEvent(new CustomEvent('pixel-fishing:mobile-control', { detail }));
         const stick = document.getElementById('movement-stick');
         const knob = document.getElementById('stick-knob');
+        const chatPanel = document.getElementById('world-chat-panel');
+        const chatInput = document.getElementById('world-chat-input');
+        const chatMessages = document.getElementById('world-chat-messages');
+        let chatStatus = document.getElementById('world-chat-empty');
         let stickPointer = null;
         let fishPointer = null;
+        let nextChatMessageId = 0;
+        let pendingChatMessageId = null;
 
         const sendMove = (x, y) => {
           emit({ type: 'move', x, y });
@@ -234,6 +325,61 @@
           });
         });
 
+        document.getElementById('world-chat-close').addEventListener('click', () => {
+          emit({ type: 'action', action: 'closeChat' });
+        });
+        document.getElementById('world-chat-form').addEventListener('submit', (event) => {
+          event.preventDefault();
+          const text = chatInput.value.trim();
+          if (!text || pendingChatMessageId !== null) return;
+          pendingChatMessageId = ++nextChatMessageId;
+          emit({ type: 'chat-submit', id: pendingChatMessageId, text });
+        });
+        window.addEventListener('pixel-fishing:chat-send-result', (event) => {
+          if (event.detail?.id !== pendingChatMessageId) return;
+          if (event.detail.sent) chatInput.value = '';
+          else chatInput.focus();
+          pendingChatMessageId = null;
+        });
+        chatInput.addEventListener('keydown', (event) => {
+          event.stopPropagation();
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            emit({ type: 'action', action: 'closeChat' });
+          }
+        });
+        window.addEventListener('pixel-fishing:world-chat-message', (event) => {
+          const { name, text } = event.detail;
+          chatStatus?.remove();
+          chatStatus = null;
+          const message = document.createElement('p');
+          message.className = 'world-chat-message';
+          const label = document.createElement('span');
+          label.className = 'world-chat-name';
+          label.textContent = `${name}: `;
+          message.append(label, document.createTextNode(text));
+          chatMessages.appendChild(message);
+          while (chatMessages.childElementCount > 60) chatMessages.firstElementChild.remove();
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+        });
+        window.addEventListener('pixel-fishing:world-chat-status', (event) => {
+          const status = event.detail?.text;
+          if (!status) return;
+          if (!chatStatus) {
+            chatStatus = document.createElement('p');
+            chatStatus.id = 'world-chat-empty';
+            chatMessages.prepend(chatStatus);
+          }
+          chatStatus.textContent = status;
+        });
+        window.addEventListener('pixel-fishing:world-chat-open', () => {
+          chatPanel.setAttribute('aria-hidden', 'false');
+          chatInput.focus();
+        });
+        window.addEventListener('pixel-fishing:world-chat-close', () => {
+          chatPanel.setAttribute('aria-hidden', 'true');
+          chatInput.blur();
+        });
         window.addEventListener('blur', releaseAll);
         document.addEventListener('visibilitychange', () => {
           if (document.hidden) releaseAll();
