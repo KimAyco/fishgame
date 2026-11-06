@@ -91,6 +91,7 @@ export class FishingScene extends Phaser.Scene {
     }
     if (control.type === 'fish') {
       this.mobileFishHeld = control.pressed;
+      if (control.pressed) this.hookFish();
       return;
     }
     if (control.type === 'chat-focus') {
@@ -274,7 +275,10 @@ export class FishingScene extends Phaser.Scene {
     });
 
     this.scale.on('resize', this.layout, this);
-    this.input.on('pointerdown', () => (this.pointerHeld = true));
+    this.input.on('pointerdown', () => {
+      this.pointerHeld = true;
+      this.hookFish();
+    });
     this.input.on('pointerup', () => (this.pointerHeld = false));
     this.input.on('wheel', (_p: unknown, _o: unknown, _dx: number, dy: number) => this.modal?.panel.wheel(dy));
 
@@ -844,11 +848,12 @@ export class FishingScene extends Phaser.Scene {
       case 'waiting': {
         this.biteTimer -= dt;
         this.bobber.y = this.target.ty * TILE + TILE / 2 + Math.sin(this.now() / 400) * 0.8;
-        if (pressed) {
+        if (this.biteTimer <= 0) {
+          this.startBite();
+          if (pressed) this.hookFish();
+        } else if (pressed) {
           this.showToast('Reeled in too early.', '#c8d0d8');
           this.resetToIdle();
-        } else if (this.biteTimer <= 0) {
-          this.startBite();
         }
         break;
       }
@@ -857,8 +862,7 @@ export class FishingScene extends Phaser.Scene {
         this.hookTimer -= dt;
         this.bobber.y = this.target.ty * TILE + TILE / 2 + 3 + Math.sin(this.now() / 40) * 1.5;
         if (pressed) {
-          this.reel = newReel();
-          this.phase = 'reeling';
+          this.hookFish();
         } else if (this.hookTimer <= 0) {
           this.recordEscape();
           this.showToast('It got away...', '#ff9a8a');
@@ -965,6 +969,12 @@ export class FishingScene extends Phaser.Scene {
     this.hooked = rollFish(defaultRng, this.zone, this.ctx());
     this.hookTimer = HOOK_WINDOW;
     this.phase = 'bite';
+  }
+
+  private hookFish(): void {
+    if (this.phase !== 'bite') return;
+    this.reel = newReel();
+    this.phase = 'reeling';
   }
 
   private resetToIdle(): void {
@@ -1132,7 +1142,12 @@ export class FishingScene extends Phaser.Scene {
       this.modal.panel.key(ev.code);
       return;
     }
-    if (this.chatInput || !net.online) return;
+    if (this.chatInput) return;
+    if (ev.code === 'Space') {
+      if (!ev.repeat) this.hookFish();
+      return;
+    }
+    if (!net.online) return;
     if (ev.code === 'Enter' || ev.code === 'NumpadEnter') this.openChat();
     const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(ev.code);
     if (n >= 0) net.sendEmote(n);
