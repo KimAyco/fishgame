@@ -60,7 +60,7 @@ export class NetClient {
   private statusListeners = new Set<Listener<NetStatus>>();
   private emoteListeners = new Set<(id: string, e: number) => void>();
   private chatListeners = new Set<(id: string, name: string, text: string) => void>();
-  private worldChatListeners = new Set<(message: { id: string; name: string; text: string; at: number; hue?: number; kind?: 'chat' | 'catch' }) => void>();
+  private worldChatListeners = new Set<(message: { id: string; name: string; text: string; at: number; hue?: number; kind?: 'chat' | 'catch'; rarity?: string }) => void>();
   private worldChatStatusListeners = new Set<Listener<boolean>>();
   private correctListeners = new Set<Listener<{ x: number; y: number }>>();
 
@@ -253,7 +253,7 @@ export class NetClient {
       this.worldChatRoom = room;
       this.worldChatDetail = '';
       this.setWorldChatStatus(true);
-      room.onMessage('world-chat', (message: { id: string; name: string; text: string; at: number; hue?: number; kind?: 'chat' | 'catch' }) => {
+      room.onMessage('world-chat', (message: { id: string; name: string; text: string; at: number; hue?: number; kind?: 'chat' | 'catch'; rarity?: string }) => {
         if (this.worldChatRoom === room) this.worldChatListeners.forEach((listener) => listener(message));
       });
       room.onLeave((code) => {
@@ -309,9 +309,9 @@ export class NetClient {
     return true;
   }
 
-  announceCatch(fishName: string, size: number): boolean {
+  announceCatch(fishName: string, rarity: string, size: number): boolean {
     if (!this.worldChatOnline || !fishName.trim()) return false;
-    this.worldChatRoom!.send('catch', { fishName, size });
+    this.worldChatRoom!.send('catch', { fishName, rarity, size });
     return true;
   }
 
@@ -344,7 +344,7 @@ export class NetClient {
     return () => this.chatListeners.delete(fn);
   }
 
-  onWorldChat(fn: (message: { id: string; name: string; text: string; at: number; hue?: number; kind?: 'chat' | 'catch' }) => void): () => void {
+  onWorldChat(fn: (message: { id: string; name: string; text: string; at: number; hue?: number; kind?: 'chat' | 'catch'; rarity?: string }) => void): () => void {
     this.worldChatListeners.add(fn);
     return () => this.worldChatListeners.delete(fn);
   }

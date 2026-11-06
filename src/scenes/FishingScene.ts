@@ -997,7 +997,7 @@ export class FishingScene extends Phaser.Scene {
       };
       store.data.xp += result.xpGained;
       store.data.stats.catches++;
-      net.announceCatch(fish.name, result.catch.size);
+      net.announceCatch(fish.name, fish.rarity, result.catch.size);
       this.popupReadyAt = this.now() + 450;
       this.showCatchPopup(fish, result.catch.size, result.catch.quality, {
         value: result.catch.value,
