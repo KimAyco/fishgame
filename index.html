@@ -123,65 +123,43 @@
           display: none;
           position: fixed;
           z-index: 30;
-          top: 50%;
-          left: 50%;
-          width: min(390px, calc(100vw - 28px));
-          height: min(440px, 62dvh);
-          transform: translate(-50%, -50%);
+          top: 120px;
+          right: max(10px, env(safe-area-inset-right));
+          width: min(300px, 27vw);
+          height: min(300px, 38dvh);
           flex-direction: column;
           gap: 8px;
-          padding: 12px;
-          border: 2px solid #d9b074;
+          padding: 10px;
+          border: 2px solid rgba(217, 176, 116, .72);
           border-radius: 12px;
-          background: rgba(37, 26, 18, .97);
+          background: rgba(37, 26, 18, .58);
           color: #fff4d6;
           font: 13px/1.35 system-ui, sans-serif;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, .6);
-          pointer-events: auto;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, .25);
+          pointer-events: none;
         }
-        body[data-world-chat-open="true"][data-scene="Fishing"] #world-chat-panel { display: flex; }
-        #world-chat-toggle {
-          display: none;
-          position: fixed;
-          z-index: 29;
-          top: 50%;
-          right: max(12px, env(safe-area-inset-right));
-          transform: translateY(-50%);
-          min-width: 42px;
-          min-height: 112px;
-          padding: 10px 7px;
-          border: 2px solid #d9b074;
-          border-radius: 12px;
-          background: rgba(37, 26, 18, .97);
-          color: #fff4d6;
-          font: 700 13px/1.2 system-ui, sans-serif;
-          writing-mode: vertical-rl;
-          cursor: pointer;
-        }
-        @media (min-width: 761px) {
-          body[data-scene="Fishing"] #world-chat-panel {
-            top: 112px;
-            right: max(12px, env(safe-area-inset-right));
-            bottom: max(88px, env(safe-area-inset-bottom));
-            left: auto;
-            width: min(320px, 32vw);
-            height: auto;
-            transform: none;
+        body[data-scene="Fishing"] #world-chat-panel { display: flex; }
+        @media (max-width: 760px), (pointer: coarse) {
+          #world-chat-panel {
+            top: max(126px, calc(env(safe-area-inset-top) + 116px));
+            width: min(250px, 54vw);
+            height: min(190px, 25dvh);
+            padding: 7px;
+            gap: 5px;
+            font-size: 11px;
           }
-          body[data-scene="Fishing"]:not([data-world-chat-open="true"]) #world-chat-toggle { display: block; }
+          #world-chat-header small { display: none; }
+          #world-chat-messages { padding: 5px; }
+          .world-chat-message { margin-bottom: 4px; }
+          #world-chat-input { padding: 6px; }
+          #world-chat-form button { min-width: 48px; padding: 0 6px; }
         }
         #world-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         #world-chat-title { font-weight: 700; }
-        #world-chat-close {
-          min-width: 38px;
-          min-height: 36px;
-          padding: 0;
-          border: 1px solid rgba(255, 233, 196, .75);
-          border-radius: 8px;
-          background: rgba(36, 31, 28, .9);
-          color: inherit;
-          font: inherit;
-          touch-action: manipulation;
+        #world-chat-messages,
+        #world-chat-form,
+        #world-chat-form button {
+          pointer-events: auto;
         }
         #world-chat-messages {
           flex: 1;
@@ -190,7 +168,7 @@
           padding: 8px;
           border: 1px solid rgba(217, 176, 116, .55);
           border-radius: 8px;
-          background: rgba(9, 14, 23, .72);
+          background: rgba(9, 14, 23, .42);
           overflow-wrap: anywhere;
         }
         .world-chat-message { margin: 0 0 7px; }
@@ -203,7 +181,7 @@
           padding: 9px;
           border: 1px solid #d9b074;
           border-radius: 8px;
-          background: #2b1d10;
+          background: rgba(43, 29, 16, .86);
           color: #fff4d6;
           font: inherit;
           font-size: 16px;
@@ -213,7 +191,7 @@
           padding: 0 10px;
           border: 1px solid #d9b074;
           border-radius: 8px;
-          background: #6b4a2a;
+          background: rgba(107, 74, 42, .88);
           color: inherit;
           font: inherit;
           touch-action: manipulation;
@@ -225,6 +203,7 @@
           #mobile-actions { grid-template-columns: repeat(2, 50px); gap: 5px; }
           #mobile-actions button { min-width: 50px; min-height: 44px; }
           #mobile-actions [data-mobile-action="fish"] { min-height: 48px; }
+          #world-chat-panel { top: max(78px, calc(env(safe-area-inset-top) + 70px)); width: min(230px, 36vw); height: 118px; }
         }
     </style>
   </head>
@@ -250,14 +229,12 @@
         </div>
       </div>
     </div>
-    <button type="button" id="world-chat-toggle" aria-controls="world-chat-panel" aria-expanded="false">World chat</button>
     <aside id="world-chat-panel" aria-labelledby="world-chat-title">
       <header id="world-chat-header">
         <div>
           <div id="world-chat-title">World chat</div>
           <small>Chat with anglers on every map</small>
         </div>
-        <button type="button" id="world-chat-close" aria-label="Close world chat">Close</button>
       </header>
       <div id="world-chat-messages" role="log" aria-live="polite">
         <p id="world-chat-empty">Connecting to world chat…</p>
@@ -271,7 +248,6 @@
     <script>
       (() => {
         const emit = (detail) => window.dispatchEvent(new CustomEvent('pixel-fishing:mobile-control', { detail }));
-        const chatToggle = document.getElementById('world-chat-toggle');
         const stick = document.getElementById('movement-stick');
         const knob = document.getElementById('stick-knob');
         const chatInput = document.getElementById('world-chat-input');
@@ -357,12 +333,6 @@
           });
         });
 
-        document.getElementById('world-chat-close').addEventListener('click', () => {
-          emit({ type: 'action', action: 'closeChat' });
-        });
-        chatToggle.addEventListener('click', () => {
-          emit({ type: 'action', action: 'chat' });
-        });
         document.getElementById('world-chat-form').addEventListener('submit', (event) => {
           event.preventDefault();
           const text = chatInput.value.trim();
@@ -383,6 +353,8 @@
             emit({ type: 'action', action: 'closeChat' });
           }
         });
+        chatInput.addEventListener('focus', () => emit({ type: 'chat-focus' }));
+        chatInput.addEventListener('blur', () => emit({ type: 'chat-blur' }));
         window.addEventListener('pixel-fishing:world-chat-message', (event) => {
           const { name, text, hue, kind } = event.detail;
           chatStatus?.remove();
@@ -409,11 +381,9 @@
           chatStatus.textContent = status;
         });
         window.addEventListener('pixel-fishing:world-chat-open', () => {
-          chatToggle.setAttribute('aria-expanded', 'true');
           chatInput.focus();
         });
         window.addEventListener('pixel-fishing:world-chat-close', () => {
-          chatToggle.setAttribute('aria-expanded', 'false');
           chatInput.blur();
         });
         window.addEventListener('blur', releaseAll);

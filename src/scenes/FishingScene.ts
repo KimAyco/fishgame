@@ -46,6 +46,8 @@ type Phase = 'idle' | 'charging' | 'casting' | 'waiting' | 'bite' | 'reeling' | 
 type MobileControl =
   | { type: 'move'; x: number; y: number }
   | { type: 'fish'; pressed: boolean }
+  | { type: 'chat-focus' }
+  | { type: 'chat-blur' }
   | { type: 'chat-submit'; id: number; text: string }
   | { type: 'action'; action: 'map' | 'bag' | 'bait' | 'book' | 'interact' | 'boat' | 'tent' | 'chat' | 'closeChat' };
 
@@ -89,6 +91,14 @@ export class FishingScene extends Phaser.Scene {
     }
     if (control.type === 'fish') {
       this.mobileFishHeld = control.pressed;
+      return;
+    }
+    if (control.type === 'chat-focus') {
+      this.chatInput = document.getElementById('world-chat-input') as HTMLInputElement | null;
+      return;
+    }
+    if (control.type === 'chat-blur') {
+      this.chatInput = null;
       return;
     }
     if (control.type === 'chat-submit') {
@@ -179,7 +189,6 @@ export class FishingScene extends Phaser.Scene {
 
   create(): void {
     document.body.dataset.scene = 'Fishing';
-    delete document.body.dataset.worldChatOpen;
     window.addEventListener('pixel-fishing:mobile-control', this.onMobileControl);
     this.uiCam = undefined;
     this.layout();
@@ -289,7 +298,8 @@ export class FishingScene extends Phaser.Scene {
 
     this.events.once('shutdown', () => {
       window.removeEventListener('pixel-fishing:mobile-control', this.onMobileControl);
-      delete document.body.dataset.worldChatOpen;
+      document.getElementById('world-chat-input')?.blur();
+      this.chatInput = null;
       if (document.body.dataset.scene === 'Fishing') delete document.body.dataset.scene;
       this.scale.off('resize', this.layout, this);
       kb.off('keydown-B', this.toggleBait, this);
@@ -1128,13 +1138,12 @@ export class FishingScene extends Phaser.Scene {
     if (n >= 0) net.sendEmote(n);
   }
 
-  /** A text box over the game: Enter sends, Escape cancels. The server cleans and rate-limits it. */
+  /** Focus the persistent chat input. Enter focuses it; Escape only blurs it. */
   private openChat(): void {
-    if (this.chatInput) return this.closeChat();
     if (this.phase === 'result') return;
     this.input.keyboard?.resetKeys();
     this.chatInput = document.getElementById('world-chat-input') as HTMLInputElement | null;
-    document.body.dataset.worldChatOpen = 'true';
+    if (!this.chatInput) return;
     const text = net.worldChatOnline
       ? 'Chat with anglers on every map.'
       : net.worldChatError || (net.status === 'error' ? net.detail : net.online ? 'World chat is connecting…' : 'Connect to the game server to use world chat.');
@@ -1145,7 +1154,6 @@ export class FishingScene extends Phaser.Scene {
   private closeChat(): void {
     if (!this.chatInput) return;
     this.chatInput = null;
-    delete document.body.dataset.worldChatOpen;
     window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-close'));
     this.input.keyboard?.resetKeys();
   }
