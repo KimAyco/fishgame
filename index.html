@@ -130,12 +130,12 @@
           flex-direction: column;
           gap: 6px;
           padding: 8px;
-          border: 1px solid rgba(217, 176, 116, .5);
-          border-radius: 12px;
-          background: rgba(37, 26, 18, .28);
+          border: 0;
+          border-radius: 8px;
+          background: rgba(20, 15, 11, .16);
           color: #fff4d6;
           font: 11px/1.3 system-ui, sans-serif;
-          box-shadow: 0 5px 18px rgba(0, 0, 0, .16);
+          box-shadow: none;
           pointer-events: none;
         }
         body[data-scene="Fishing"] #world-chat-panel { display: flex; }
@@ -166,10 +166,11 @@
           overflow-y: auto;
           overscroll-behavior: contain;
           padding: 8px;
-          border: 1px solid rgba(217, 176, 116, .55);
-          border-radius: 8px;
-          background: rgba(9, 14, 23, .2);
+          border: 0;
+          border-radius: 4px;
+          background: rgba(9, 14, 23, .12);
           overflow-wrap: anywhere;
+          text-shadow: 0 1px 3px #000;
         }
         .world-chat-message { margin: 0 0 7px; }
         .world-chat-message.is-catch { font-weight: 600; }
@@ -347,7 +348,10 @@
         });
         window.addEventListener('pixel-fishing:chat-send-result', (event) => {
           if (event.detail?.id !== pendingChatMessageId) return;
-          if (event.detail.sent) chatInput.value = '';
+          if (event.detail.sent) {
+            chatInput.value = '';
+            chatInput.blur();
+          }
           else chatInput.focus();
           pendingChatMessageId = null;
         });
@@ -360,6 +364,9 @@
         });
         chatInput.addEventListener('focus', () => emit({ type: 'chat-focus' }));
         chatInput.addEventListener('blur', () => emit({ type: 'chat-blur' }));
+        document.addEventListener('pointerdown', (event) => {
+          if (document.activeElement === chatInput && event.target !== chatInput) chatInput.blur();
+        }, true);
         window.addEventListener('pixel-fishing:world-chat-message', (event) => {
           const { name, text, hue, kind, rarity } = event.detail;
           chatStatus?.remove();
