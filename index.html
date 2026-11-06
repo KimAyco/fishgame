@@ -194,7 +194,8 @@
           overflow-wrap: anywhere;
         }
         .world-chat-message { margin: 0 0 7px; }
-        .world-chat-name { color: #a6e36a; font-weight: 700; }
+        .world-chat-message.is-catch { color: #ffd77a; }
+        .world-chat-name { font-weight: 700; }
         #world-chat-form { display: flex; gap: 6px; }
         #world-chat-input {
           flex: 1;
@@ -383,13 +384,14 @@
           }
         });
         window.addEventListener('pixel-fishing:world-chat-message', (event) => {
-          const { name, text } = event.detail;
+          const { name, text, hue, kind } = event.detail;
           chatStatus?.remove();
           chatStatus = null;
           const message = document.createElement('p');
-          message.className = 'world-chat-message';
+          message.className = `world-chat-message${kind === 'catch' ? ' is-catch' : ''}`;
           const label = document.createElement('span');
           label.className = 'world-chat-name';
+          if (Number.isInteger(hue) && hue >= 0 && hue < 360) label.style.color = `hsl(${hue} 72% 62%)`;
           label.textContent = `${name}: `;
           message.append(label, document.createTextNode(text));
           chatMessages.appendChild(message);

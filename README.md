@@ -12,7 +12,8 @@ over a realtime Colyseus server.
 Controls: WASD or arrows to walk, SPACE to cast (hold and release), hook and reel, and to open the shop
 at its door. B changes bait, F opens the fish book, M the world map. Online: 1 to 4 for emotes.
 World chat stays docked on the right during desktop gameplay; press Enter to focus it. On mobile,
-the Chat button opens the chat panel.
+the Chat button opens the chat panel. Chat names have per-account colors, and saved fish catches are
+announced to everyone in world chat.
 
 Single-player works on its own. Online play needs the server in the `colysues` repo.
 
