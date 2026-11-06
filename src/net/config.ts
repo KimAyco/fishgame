@@ -11,7 +11,10 @@ export const SERVER_HTTP_URL = raw.replace(/^ws/, 'http');
 export const MULTIPLAYER_AVAILABLE = raw !== '';
 
 const apiFromEnv = import.meta.env.VITE_GAME_API_URL;
-const apiRaw = (apiFromEnv ?? (import.meta.env.DEV ? 'http://localhost/image%20generator/APIdatabase' : '')).trim();
+const defaultApiUrl = import.meta.env.DEV
+  ? 'http://localhost/image%20generator/APIdatabase'
+  : 'https://colysues-1.onrender.com/api/db';
+const apiRaw = (apiFromEnv ?? defaultApiUrl).trim();
 
 /** Base URL of the PHP game API; no trailing slash. */
 export const GAME_API_URL = apiRaw.replace(/\/+$/, '');

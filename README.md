@@ -44,7 +44,9 @@ To run both locally:
 1. Import this repository (`KimAyco/fishgame`) in Vercel. It detects Vite: build `npm run build`, output `dist`.
 2. Add the environment variable `VITE_COLYSEUS_URL` = `wss://<your-service>.onrender.com`
    (it must be `wss://`, because the site is served over https). Variables are read at build time, so redeploy after changing it.
-3. On the Render service, set `ALLOWED_ORIGINS` to your Vercel URL so the browser may call the server.
+3. The PHP game API defaults to `https://colysues-1.onrender.com/api/db`. Set
+   `VITE_GAME_API_URL` in Vercel only if deploying the API elsewhere; frontend variables are read at build time.
+4. On the API host, allow your Vercel URL in its CORS origin configuration so browser requests are accepted.
 
 ## Scripts
 
