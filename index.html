@@ -140,6 +140,19 @@
           pointer-events: auto;
         }
         body[data-world-chat-open="true"][data-scene="Fishing"] #world-chat-panel { display: flex; }
+        @media (min-width: 761px) {
+          body[data-scene="Fishing"] #world-chat-panel {
+            display: flex;
+            top: 112px;
+            right: max(12px, env(safe-area-inset-right));
+            bottom: max(88px, env(safe-area-inset-bottom));
+            left: auto;
+            width: min(320px, 32vw);
+            height: auto;
+            transform: none;
+          }
+          #world-chat-close { display: none; }
+        }
         #world-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         #world-chat-title { font-weight: 700; }
         #world-chat-close {
@@ -219,7 +232,7 @@
         </div>
       </div>
     </div>
-    <section id="world-chat-panel" role="dialog" aria-modal="true" aria-labelledby="world-chat-title" aria-hidden="true">
+    <aside id="world-chat-panel" aria-labelledby="world-chat-title">
       <header id="world-chat-header">
         <div>
           <div id="world-chat-title">World chat</div>
@@ -234,14 +247,13 @@
         <input id="world-chat-input" type="text" maxlength="80" autocomplete="off" placeholder="Say something…" aria-label="World chat message" />
         <button type="submit">Send</button>
       </form>
-    </section>
+    </aside>
     <script type="module" src="/src/main.ts"></script>
     <script>
       (() => {
         const emit = (detail) => window.dispatchEvent(new CustomEvent('pixel-fishing:mobile-control', { detail }));
         const stick = document.getElementById('movement-stick');
         const knob = document.getElementById('stick-knob');
-        const chatPanel = document.getElementById('world-chat-panel');
         const chatInput = document.getElementById('world-chat-input');
         const chatMessages = document.getElementById('world-chat-messages');
         let chatStatus = document.getElementById('world-chat-empty');
@@ -373,11 +385,9 @@
           chatStatus.textContent = status;
         });
         window.addEventListener('pixel-fishing:world-chat-open', () => {
-          chatPanel.setAttribute('aria-hidden', 'false');
           chatInput.focus();
         });
         window.addEventListener('pixel-fishing:world-chat-close', () => {
-          chatPanel.setAttribute('aria-hidden', 'true');
           chatInput.blur();
         });
         window.addEventListener('blur', releaseAll);

@@ -10,8 +10,9 @@ over a realtime Colyseus server.
     npm run dev          # http://localhost:5173 (or the next free port)
 
 Controls: WASD or arrows to walk, SPACE to cast (hold and release), hook and reel, and to open the shop
-at its door. B changes bait, F opens the fish book, M the world map. Online: 1 to 4 for emotes, Enter
-or the mobile Chat button opens world chat.
+at its door. B changes bait, F opens the fish book, M the world map. Online: 1 to 4 for emotes.
+World chat stays docked on the right during desktop gameplay; press Enter to focus it. On mobile,
+the Chat button opens the chat panel.
 
 Single-player works on its own. Online play needs the server in the `colysues` repo.
 
