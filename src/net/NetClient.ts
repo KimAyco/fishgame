@@ -26,6 +26,16 @@ const SERVER_REJECTED = new Set([4000, 4001, 4002, 4003]);
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+function rejectionDetail(code: number, room: string): string {
+  if (code === 4002) {
+    return 'The game server rejected your login. Sign out and sign in again; if it continues, check that GAME_AUTH_SECRET matches the game API.';
+  }
+  if (code === 4003) return 'This account is already connected to this room. Wait a moment and try again.';
+  if (code === 4000) return `The game server does not recognize this ${room === 'fishing' ? 'map' : 'room'}.`;
+  if (code === 4001) return 'The game server rejected this room code.';
+  return `The game server rejected the ${room} room (error ${code}).`;
+}
+
 export class NetClient {
   status: NetStatus = 'offline';
   /** short human-readable note to show next to the status */
@@ -40,6 +50,7 @@ export class NetClient {
   private worldChatRoom: Room | null = null;
   private attempt = 0;
   private worldChatAttempt = 0;
+  private worldChatDetail = '';
   private worldChatRetry: ReturnType<typeof setTimeout> | null = null;
   private lastJoin: JoinOptions | null = null;
   private positionProvider: (() => { x: number; y: number }) | null = null;
@@ -63,6 +74,10 @@ export class NetClient {
 
   get worldChatOnline(): boolean {
     return this.worldChatRoom !== null && this.online;
+  }
+
+  get worldChatError(): string {
+    return this.worldChatDetail;
   }
 
   /** This player's id in the room, once joined. */
@@ -113,7 +128,7 @@ export class NetClient {
         if (attempt !== this.attempt) return;
         const code = (e as { code?: number }).code;
         if (code !== undefined && SERVER_REJECTED.has(code)) {
-          this.setStatus('error', 'The server turned this room down');
+          this.setStatus('error', rejectionDetail(code, 'fishing'));
           return;
         }
         if (Date.now() - started > GIVE_UP_AFTER_MS) {
@@ -213,6 +228,7 @@ export class NetClient {
     this.worldChatRetry = null;
     const worldChatRoom = this.worldChatRoom;
     this.worldChatRoom = null;
+    this.worldChatDetail = '';
     this.setWorldChatStatus(false);
     if (worldChatRoom) worldChatRoom.leave(true).catch(() => undefined);
     this.clearTimers();
@@ -225,6 +241,7 @@ export class NetClient {
     const client = this.client;
     if (!client || attempt !== this.attempt || !this.online) return;
     if (this.worldChatRoom) return;
+    this.worldChatDetail = '';
     this.setWorldChatStatus(false);
     const chatAttempt = ++this.worldChatAttempt;
     try {
@@ -234,6 +251,7 @@ export class NetClient {
         return;
       }
       this.worldChatRoom = room;
+      this.worldChatDetail = '';
       this.setWorldChatStatus(true);
       room.onMessage('world-chat', (message: { id: string; name: string; text: string; at: number }) => {
         if (this.worldChatRoom === room) this.worldChatListeners.forEach((listener) => listener(message));
@@ -248,8 +266,16 @@ export class NetClient {
       room.onError((code, message) => console.warn('[net] world chat error', code, message));
     } catch (error) {
       if (attempt !== this.attempt || chatAttempt !== this.worldChatAttempt || !this.online) return;
+      const code = (error as { code?: number }).code;
+      const errorMessage = error instanceof Error ? error.message : '';
+      this.worldChatDetail = code !== undefined && SERVER_REJECTED.has(code)
+        ? rejectionDetail(code, 'world-chat')
+        : errorMessage.includes('GAME_AUTH_SECRET')
+          ? 'World chat server authentication is misconfigured. Configure GAME_AUTH_SECRET to match the game API.'
+          : '';
       this.setWorldChatStatus(false);
       console.warn('[net] world chat unavailable', error);
+      if ((code !== undefined && SERVER_REJECTED.has(code)) || this.worldChatDetail.includes('misconfigured')) return;
       this.worldChatRetry = setTimeout(() => void this.joinWorldChat(token, attempt), 5000);
     }
   }

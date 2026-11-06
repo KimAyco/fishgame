@@ -140,9 +140,26 @@
           pointer-events: auto;
         }
         body[data-world-chat-open="true"][data-scene="Fishing"] #world-chat-panel { display: flex; }
+        #world-chat-toggle {
+          display: none;
+          position: fixed;
+          z-index: 29;
+          top: 50%;
+          right: max(12px, env(safe-area-inset-right));
+          transform: translateY(-50%);
+          min-width: 42px;
+          min-height: 112px;
+          padding: 10px 7px;
+          border: 2px solid #d9b074;
+          border-radius: 12px;
+          background: rgba(37, 26, 18, .97);
+          color: #fff4d6;
+          font: 700 13px/1.2 system-ui, sans-serif;
+          writing-mode: vertical-rl;
+          cursor: pointer;
+        }
         @media (min-width: 761px) {
           body[data-scene="Fishing"] #world-chat-panel {
-            display: flex;
             top: 112px;
             right: max(12px, env(safe-area-inset-right));
             bottom: max(88px, env(safe-area-inset-bottom));
@@ -151,7 +168,7 @@
             height: auto;
             transform: none;
           }
-          #world-chat-close { display: none; }
+          body[data-scene="Fishing"]:not([data-world-chat-open="true"]) #world-chat-toggle { display: block; }
         }
         #world-chat-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         #world-chat-title { font-weight: 700; }
@@ -232,6 +249,7 @@
         </div>
       </div>
     </div>
+    <button type="button" id="world-chat-toggle" aria-controls="world-chat-panel" aria-expanded="false">World chat</button>
     <aside id="world-chat-panel" aria-labelledby="world-chat-title">
       <header id="world-chat-header">
         <div>
@@ -252,6 +270,7 @@
     <script>
       (() => {
         const emit = (detail) => window.dispatchEvent(new CustomEvent('pixel-fishing:mobile-control', { detail }));
+        const chatToggle = document.getElementById('world-chat-toggle');
         const stick = document.getElementById('movement-stick');
         const knob = document.getElementById('stick-knob');
         const chatInput = document.getElementById('world-chat-input');
@@ -340,6 +359,9 @@
         document.getElementById('world-chat-close').addEventListener('click', () => {
           emit({ type: 'action', action: 'closeChat' });
         });
+        chatToggle.addEventListener('click', () => {
+          emit({ type: 'action', action: 'chat' });
+        });
         document.getElementById('world-chat-form').addEventListener('submit', (event) => {
           event.preventDefault();
           const text = chatInput.value.trim();
@@ -385,9 +407,11 @@
           chatStatus.textContent = status;
         });
         window.addEventListener('pixel-fishing:world-chat-open', () => {
+          chatToggle.setAttribute('aria-expanded', 'true');
           chatInput.focus();
         });
         window.addEventListener('pixel-fishing:world-chat-close', () => {
+          chatToggle.setAttribute('aria-expanded', 'false');
           chatInput.blur();
         });
         window.addEventListener('blur', releaseAll);

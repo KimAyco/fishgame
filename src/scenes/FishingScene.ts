@@ -95,7 +95,8 @@ export class FishingScene extends Phaser.Scene {
       const sent = net.sendChat(control.text);
       window.dispatchEvent(new CustomEvent('pixel-fishing:chat-send-result', { detail: { id: control.id, sent } }));
       if (!sent) {
-        window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-status', { detail: { text: 'World chat is reconnecting. Please try again.' } }));
+        const text = net.worldChatError || net.detail || 'World chat is reconnecting. Please try again.';
+        window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-status', { detail: { text } }));
       }
       return;
     }
@@ -1069,7 +1070,9 @@ export class FishingScene extends Phaser.Scene {
         window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-message', { detail: message }));
       }),
       net.onWorldChatStatus((online) => {
-        const text = online ? 'World chat connected.' : net.online ? 'World chat is reconnecting…' : 'Connect to the game server to use world chat.';
+        const text = online
+          ? 'World chat connected.'
+          : net.worldChatError || (net.status === 'error' ? net.detail : net.online ? 'World chat is reconnecting…' : 'Connect to the game server to use world chat.');
         window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-status', { detail: { text } }));
       }),
     );
@@ -1131,7 +1134,9 @@ export class FishingScene extends Phaser.Scene {
     this.input.keyboard?.resetKeys();
     this.chatInput = document.getElementById('world-chat-input') as HTMLInputElement | null;
     document.body.dataset.worldChatOpen = 'true';
-    const text = net.worldChatOnline ? 'Chat with anglers on every map.' : net.online ? 'World chat is connecting…' : 'Connect to the game server to use world chat.';
+    const text = net.worldChatOnline
+      ? 'Chat with anglers on every map.'
+      : net.worldChatError || (net.status === 'error' ? net.detail : net.online ? 'World chat is connecting…' : 'Connect to the game server to use world chat.');
     window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-status', { detail: { text } }));
     window.dispatchEvent(new CustomEvent('pixel-fishing:world-chat-open'));
   }
