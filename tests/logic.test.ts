@@ -3,6 +3,7 @@ import { BAIT_BY_ID, ROD_BY_ID } from '../src/data/gear';
 import { FISH_BY_ID } from '../src/data/fish';
 import { MAPS } from '../src/data/maps';
 import { buyBait, buyRod, consumeBait, defaultSave, fishPrice, levelOf, recordCatch, sellAll, unlockMap } from '../src/logic/economy';
+import { bagValue, baitRows, groupBag } from '../src/logic/bag';
 import { biteDelay, newReel, reelQuality, rollFish, rollSize, stepReel, zoneAt } from '../src/logic/fishing';
 import { mulberry32 } from '../src/logic/rng';
 import { gameHour, timeOfDay } from '../src/logic/time';
@@ -170,5 +171,30 @@ describe('world', () => {
     expect(timeOfDay(23)).toBe('night');
     expect(timeOfDay(12)).toBe('day');
     expect(timeOfDay(19)).toBe('dusk');
+  });
+});
+
+describe('bag and bait lists', () => {
+  it('groups the bag by species, rarest first', () => {
+    const d = defaultSave();
+    d.inventory.push(
+      { fishId: 'bluegill', size: 12, quality: 0.5, value: 5 },
+      { fishId: 'goldkoi', size: 60, quality: 0.5, value: 400 },
+      { fishId: 'bluegill', size: 20, quality: 0.5, value: 6 },
+    );
+    const rows = groupBag(d.inventory);
+    expect(rows.map((r) => r.fish.id)).toEqual(['goldkoi', 'bluegill']);
+    expect(rows[1]).toMatchObject({ count: 2, bestSize: 20, totalValue: 11 });
+    expect(bagValue(d.inventory)).toBe(411);
+  });
+
+  it('lists baits with counts, dough always selectable', () => {
+    const d = defaultSave();
+    d.bait.worm = 3;
+    const rows = baitRows(d);
+    const by = Object.fromEntries(rows.map((r) => [r.bait.id, r]));
+    expect(by.dough).toMatchObject({ count: Infinity, selectable: true, active: true });
+    expect(by.worm).toMatchObject({ count: 3, selectable: true, active: false });
+    expect(by.minnow).toMatchObject({ count: 0, selectable: false });
   });
 });

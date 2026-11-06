@@ -55,10 +55,11 @@ export interface MapPalette {
   deep: number;
   hills: number;
   dock: number;
+  ground?: number;
 }
 
 export type Side = 'n' | 's' | 'e' | 'w';
-export type MapKind = 'pond' | 'river' | 'ocean' | 'swamp';
+export type MapKind = 'pond' | 'river' | 'ocean' | 'swamp' | 'market';
 
 export interface MapDef {
   id: string;
@@ -70,18 +71,37 @@ export interface MapDef {
   palette: MapPalette;
   worldPos: { x: number; y: number };
   kind: MapKind;
+  isMarket?: boolean;
   /** size in 16px tiles */
   size: { w: number; h: number };
   seed: number;
+  /** Optional database-authored tile grid, indexed as [y][x]. */
+  tileGrid?: number[][];
+  spawn?: { x: number; y: number; dir: 'up' | 'down' | 'left' | 'right' };
   /** walk off this edge to travel to the linked map */
-  exits: { side: Side; to: string }[];
+  exits: {
+    side: Side;
+    to: string;
+    inner?: { x: number; y: number };
+    dir?: 'up' | 'down' | 'left' | 'right';
+  }[];
 }
 
 export interface Catch {
+  id?: number;
   fishId: string;
   size: number;
   quality: number;
   value: number;
+}
+
+export interface PlayerPlaceable {
+  id: number;
+  kind: 'boat' | 'tent';
+  mapId: string | null;
+  x: number | null;
+  y: number | null;
+  deployed: boolean;
 }
 
 export interface SaveData {
@@ -96,4 +116,5 @@ export interface SaveData {
   maps: string[];
   lastMap: string;
   stats: { casts: number; catches: number; escapes: number };
+  placeables: PlayerPlaceable[];
 }

@@ -24,7 +24,7 @@ function f(
   };
 }
 
-export const FISH: FishDef[] = [
+export let FISH: FishDef[] = [
   // Calm Pond
   f('bluegill', 'Bluegill', 'common', 10, 25, 5, 0.3, 0.3, 0x4f9fd4),
   f('perch', 'Perch', 'common', 15, 35, 7, 0.35, 0.35, 0xd8b23c),
@@ -58,4 +58,17 @@ export const FISH: FishDef[] = [
   f('ghosteel', 'Ghost Eel', 'legendary', 80, 200, 1500, 0.95, 0.95, 0xc8f0ff, { time: ['night'], weather: ['fog'] }),
 ];
 
-export const FISH_BY_ID: Record<string, FishDef> = Object.fromEntries(FISH.map((x) => [x.id, x]));
+export let FISH_BY_ID: Record<string, FishDef> = Object.fromEntries(FISH.map((x) => [x.id, x]));
+
+export function setFishCatalog(fish: FishDef[]): void {
+  const ids = new Set<string>();
+  for (const entry of fish) {
+    if (!entry.id || ids.has(entry.id) || !Number.isFinite(entry.minSize) || entry.minSize < 1 || entry.maxSize < entry.minSize) {
+      throw new Error('Fish catalog contains invalid entries');
+    }
+    ids.add(entry.id);
+  }
+  if (!ids.size) throw new Error('Fish catalog is empty');
+  FISH = fish;
+  FISH_BY_ID = Object.fromEntries(fish.map((entry) => [entry.id, entry]));
+}

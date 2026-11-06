@@ -2,15 +2,243 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Pixel Fishing</title>
     <style>
-      html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden; }
-      #game { width: 100vw; height: 100vh; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 100%; height: 100%; height: 100dvh; background: #05070d; overflow: hidden; }
+      #game { position: fixed; inset: 0; width: 100%; height: 100%; overflow: hidden; }
+      #mobile-controls { display: none; }
+      @media (max-width: 760px), (pointer: coarse) {
+        body[data-scene="Fishing"] #mobile-controls {
+          display: block;
+          position: fixed;
+          inset: 0;
+          z-index: 20;
+          pointer-events: none;
+          color: #fff4d6;
+          font: 600 12px/1 system-ui, sans-serif;
+          user-select: none;
+          -webkit-user-select: none;
+        }
+        #mobile-controls button {
+          display: grid;
+          place-items: center;
+          min-width: 44px;
+          min-height: 44px;
+          padding: 0;
+          border: 1px solid rgba(255, 233, 196, .75);
+          border-radius: 12px;
+          background: rgba(36, 31, 28, .82);
+          color: inherit;
+          font: inherit;
+          font-size: 15px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+          touch-action: none;
+          -webkit-tap-highlight-color: transparent;
+          pointer-events: auto;
+        }
+        #mobile-controls button:active,
+        #mobile-controls button.is-active {
+          background: rgba(170, 104, 49, .96);
+          transform: scale(.96);
+        }
+        #mobile-shortcuts {
+          position: absolute;
+          top: max(72px, calc(env(safe-area-inset-top) + 60px));
+          right: max(12px, env(safe-area-inset-right));
+          left: max(12px, env(safe-area-inset-left));
+          display: flex;
+          justify-content: flex-end;
+          gap: 5px;
+          pointer-events: none;
+        }
+        #mobile-shortcuts button {
+          min-width: 40px;
+          min-height: 38px;
+          padding: 0 5px;
+          font-size: 11px;
+          pointer-events: auto;
+        }
+        #mobile-bottom {
+          position: absolute;
+          right: max(12px, env(safe-area-inset-right));
+          bottom: max(88px, calc(env(safe-area-inset-bottom) + 64px));
+          left: max(12px, env(safe-area-inset-left));
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          pointer-events: none;
+        }
+        #movement-stick {
+          order: 2;
+          position: relative;
+          width: 142px;
+          height: 142px;
+          flex: 0 0 142px;
+          border: 1px solid rgba(255, 233, 196, .58);
+          border-radius: 50%;
+          background: rgba(27, 38, 48, .55);
+          pointer-events: auto;
+          touch-action: none;
+        }
+        #movement-stick.is-active { background: rgba(57, 72, 81, .78); }
+        #stick-knob {
+          position: absolute;
+          top: 43px;
+          left: 43px;
+          width: 54px;
+          height: 54px;
+          border: 1px solid rgba(255, 233, 196, .8);
+          border-radius: 50%;
+          background: rgba(180, 130, 77, .92);
+          box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+          pointer-events: none;
+        }
+        #mobile-actions {
+          order: 1;
+          display: grid;
+          grid-template-columns: repeat(2, 58px);
+          gap: 8px;
+          pointer-events: none;
+        }
+        #mobile-actions button { min-width: 58px; min-height: 54px; }
+        #mobile-actions [data-mobile-action="fish"] {
+          grid-column: span 2;
+          min-height: 62px;
+          border-radius: 18px;
+          background: rgba(129, 72, 32, .94);
+          font-size: 13px;
+        }
+        @media (max-width: 380px) {
+          #movement-stick { transform: scale(.88); transform-origin: bottom right; margin-left: -16px; margin-bottom: -8px; }
+          #mobile-actions { grid-template-columns: repeat(2, 52px); gap: 6px; }
+          #mobile-actions button { min-width: 52px; min-height: 50px; }
+          #mobile-actions [data-mobile-action="fish"] { min-height: 56px; }
+          #mobile-shortcuts { gap: 4px; }
+          #mobile-shortcuts button { min-width: 38px; min-height: 36px; }
+        }
+        @media (orientation: landscape) and (max-height: 500px) {
+          #mobile-shortcuts { top: max(46px, calc(env(safe-area-inset-top) + 40px)); }
+          #mobile-bottom { bottom: max(6px, env(safe-area-inset-bottom)); }
+          #movement-stick { transform: scale(.82); transform-origin: bottom right; margin-left: -24px; margin-bottom: -10px; }
+          #mobile-actions { grid-template-columns: repeat(2, 50px); gap: 5px; }
+          #mobile-actions button { min-width: 50px; min-height: 44px; }
+          #mobile-actions [data-mobile-action="fish"] { min-height: 48px; }
+        }
+      }
     </style>
   </head>
   <body>
     <div id="game"></div>
+    <div id="mobile-controls" aria-label="Touch game controls">
+      <nav id="mobile-shortcuts" aria-label="Game menus">
+        <button type="button" data-mobile-action="map" aria-label="Open map">Map</button>
+        <button type="button" data-mobile-action="bag" aria-label="Open bag">Bag</button>
+        <button type="button" data-mobile-action="bait" aria-label="Change bait">Bait</button>
+        <button type="button" data-mobile-action="book" aria-label="Open fish book">Book</button>
+      </nav>
+      <div id="mobile-bottom">
+        <div id="movement-stick" role="application" aria-label="Movement joystick">
+          <div id="stick-knob"></div>
+        </div>
+        <div id="mobile-actions" aria-label="Game actions">
+          <button type="button" data-mobile-action="fish" aria-label="Hold to cast or reel">Fish</button>
+          <button type="button" data-mobile-action="interact" aria-label="Interact or use">Use</button>
+          <button type="button" data-mobile-action="boat" aria-label="Place boat">Boat</button>
+          <button type="button" data-mobile-action="tent" aria-label="Place tent">Tent</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
+    <script>
+      (() => {
+        const emit = (detail) => window.dispatchEvent(new CustomEvent('pixel-fishing:mobile-control', { detail }));
+        const stick = document.getElementById('movement-stick');
+        const knob = document.getElementById('stick-knob');
+        let stickPointer = null;
+        let fishPointer = null;
+
+        const sendMove = (x, y) => {
+          emit({ type: 'move', x, y });
+        };
+        const releaseAll = () => {
+          stick?.classList.remove('is-active');
+          if (knob) knob.style.transform = 'translate(0, 0)';
+          stickPointer = null;
+          fishPointer = null;
+          sendMove(0, 0);
+          emit({ type: 'fish', pressed: false });
+        };
+
+        const moveStick = (event) => {
+          if (stickPointer !== event.pointerId) return;
+          const rect = stick.getBoundingClientRect();
+          const radius = rect.width * .32;
+          let x = (event.clientX - (rect.left + rect.width / 2)) / radius;
+          let y = (event.clientY - (rect.top + rect.height / 2)) / radius;
+          const magnitude = Math.hypot(x, y);
+          if (magnitude > 1) { x /= magnitude; y /= magnitude; }
+          if (Math.hypot(x, y) < .18) x = y = 0;
+          knob.style.transform = `translate(${x * radius}px, ${y * radius}px)`;
+          sendMove(x, y);
+        };
+        stick.addEventListener('pointerdown', (event) => {
+          if (stickPointer !== null) return;
+          event.preventDefault();
+          stickPointer = event.pointerId;
+          stick.setPointerCapture(event.pointerId);
+          stick.classList.add('is-active');
+          moveStick(event);
+        });
+        stick.addEventListener('pointermove', moveStick);
+        const releaseStick = (event) => {
+          if (stickPointer !== event.pointerId) return;
+          event.preventDefault();
+          stickPointer = null;
+          stick.classList.remove('is-active');
+          knob.style.transform = 'translate(0, 0)';
+          sendMove(0, 0);
+        };
+        stick.addEventListener('pointerup', releaseStick);
+        stick.addEventListener('pointercancel', releaseStick);
+        stick.addEventListener('lostpointercapture', releaseStick);
+
+        document.querySelectorAll('[data-mobile-action]').forEach((button) => {
+          const action = button.dataset.mobileAction;
+          if (action === 'fish') {
+            const press = (event) => {
+              event.preventDefault();
+              if (fishPointer !== null) return;
+              fishPointer = event.pointerId;
+              button.setPointerCapture?.(event.pointerId);
+              button.classList.add('is-active');
+              emit({ type: 'fish', pressed: true });
+            };
+            const release = (event) => {
+              event.preventDefault();
+              if (fishPointer === null) return;
+              fishPointer = null;
+              button.classList.remove('is-active');
+              emit({ type: 'fish', pressed: false });
+            };
+            button.addEventListener('pointerdown', press);
+            button.addEventListener('pointerup', release);
+            button.addEventListener('pointercancel', release);
+            button.addEventListener('lostpointercapture', release);
+            return;
+          }
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            emit({ type: 'action', action });
+          });
+        });
+
+        window.addEventListener('blur', releaseAll);
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) releaseAll();
+        });
+      })();
+    </script>
   </body>
 </html>

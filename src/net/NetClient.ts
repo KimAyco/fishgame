@@ -22,7 +22,7 @@ type Listener<T> = (value: T) => void;
 
 /** Render's free tier sleeps when idle and takes up to a minute to wake: keep trying that long. */
 const GIVE_UP_AFTER_MS = 90_000;
-const SERVER_REJECTED = new Set([4000, 4001]);
+const SERVER_REJECTED = new Set([4000, 4001, 4002, 4003]);
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 

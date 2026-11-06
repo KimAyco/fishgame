@@ -1,6 +1,6 @@
 import type { MapDef } from '../types';
 
-export const MAPS: MapDef[] = [
+export let MAPS: MapDef[] = [
   {
     id: 'pond',
     name: 'Calm Pond',
@@ -74,3 +74,30 @@ export const MAPS: MapDef[] = [
 ];
 
 export const MAP_BY_ID: Record<string, MapDef> = Object.fromEntries(MAPS.map((x) => [x.id, x]));
+
+const KNOWN_TILE_IDS = new Set(Array.from({ length: 14 }, (_, id) => id));
+
+/** Replaces the fallback catalog with validated map data loaded from the game API. */
+export function setMapCatalog(maps: MapDef[]): void {
+  if (maps.length !== 16 || maps.filter((map) => map.isMarket).length !== 1) {
+    throw new Error('Game catalog must contain 15 fishing maps and one market map');
+  }
+  const ids = new Set<string>();
+  for (const map of maps) {
+    if (!map.id || ids.has(map.id)) throw new Error(`Invalid or duplicate map id: ${map.id}`);
+    ids.add(map.id);
+    if (!Number.isInteger(map.size.w) || !Number.isInteger(map.size.h) || map.size.w < 1 || map.size.h < 1) {
+      throw new Error(`Invalid map dimensions: ${map.id}`);
+    }
+    if (!Array.isArray(map.tileGrid) || map.tileGrid.length !== map.size.h) throw new Error(`Invalid tile grid height: ${map.id}`);
+    for (const row of map.tileGrid) {
+      if (!Array.isArray(row) || row.length !== map.size.w || row.some((tile) => !Number.isInteger(tile) || !KNOWN_TILE_IDS.has(tile))) {
+        throw new Error(`Invalid tile grid data: ${map.id}`);
+      }
+    }
+  }
+
+  MAPS = maps;
+  for (const id of Object.keys(MAP_BY_ID)) delete MAP_BY_ID[id];
+  for (const map of maps) MAP_BY_ID[map.id] = map;
+}

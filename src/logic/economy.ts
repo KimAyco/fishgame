@@ -37,6 +37,7 @@ export function defaultSave(): SaveData {
     maps: ['pond'],
     lastMap: 'pond',
     stats: { casts: 0, catches: 0, escapes: 0 },
+    placeables: [],
   };
 }
 

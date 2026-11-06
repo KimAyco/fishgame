@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** wss:// URL of the Colyseus server; empty or unset means single-player only. */
+  /** ws:// or wss:// URL of the Colyseus server. */
   readonly VITE_COLYSEUS_URL?: string;
+  /** HTTPS base URL for the PHP/MySQL game API. */
+  readonly VITE_GAME_API_URL?: string;
 }

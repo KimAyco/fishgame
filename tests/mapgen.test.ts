@@ -57,6 +57,17 @@ describe.each(MAPS.map((m) => [m.id, m] as const))('mapgen %s', (_id, def) => {
 });
 
 describe('exits', () => {
+  it('blocks every water depth on foot while keeping docks walkable', () => {
+    expect(isWater(T.WATER)).toBe(true);
+    expect(isWater(T.DEEP)).toBe(true);
+    expect(isWater(T.SHALLOW_WATER)).toBe(true);
+    expect(isSolid(T.WATER)).toBe(true);
+    expect(isSolid(T.DEEP)).toBe(true);
+    expect(isSolid(T.SHALLOW_WATER)).toBe(true);
+    expect(isSolid(T.WOOD)).toBe(false);
+    expect(isSolid(T.BRIDGE)).toBe(false);
+  });
+
   it('every exit has a matching return exit', () => {
     for (const def of MAPS) {
       for (const e of def.exits) {

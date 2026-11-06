@@ -15,6 +15,9 @@ export const T = {
   DOOR: 8,
   TREE: 9,
   ROCK: 10,
+  SHALLOW_WATER: 11,
+  BRIDGE: 12,
+  MARKET_FLOOR: 13,
 } as const;
 
 export type Dir = 'up' | 'down' | 'left' | 'right';
@@ -25,9 +28,9 @@ export const DIRS: Record<Dir, { dx: number; dy: number }> = {
   right: { dx: 1, dy: 0 },
 };
 
-const SOLID = new Set<number>([T.WATER, T.DEEP, T.SHOP, T.DOOR, T.TREE, T.ROCK]);
+const SOLID = new Set<number>([T.WATER, T.DEEP, T.SHALLOW_WATER, T.SHOP, T.DOOR, T.TREE, T.ROCK]);
 export const isSolid = (t: number): boolean => SOLID.has(t);
-export const isWater = (t: number): boolean => t === T.WATER || t === T.DEEP;
+export const isWater = (t: number): boolean => t === T.WATER || t === T.DEEP || t === T.SHALLOW_WATER;
 
 export interface Pt {
   x: number;
@@ -81,10 +84,36 @@ const LAYOUTS: Record<MapDef['kind'], Layout> = {
   river: { shop: { x: 8, y: 6 }, scan: { x: 6, y: 16, dir: 'right' } },
   ocean: { shop: { x: 12, y: 38 }, scan: { x: 40, y: 44, dir: 'up' } },
   swamp: { shop: { x: 10, y: 8 }, scan: { x: 8, y: 30, dir: 'right' } },
+  market: { shop: { x: 8, y: 8 }, scan: { x: 12, y: 14, dir: 'up' } },
 };
 
 export function generateMap(def: MapDef): GeneratedMap {
   const { w, h } = def.size;
+  if (def.tileGrid) {
+    if (def.tileGrid.length !== h || def.tileGrid.some((row) => row.length !== w)) {
+      throw new Error(`Invalid database tile grid dimensions for map ${def.id}`);
+    }
+    const tiles = def.tileGrid.map((row) => [...row]);
+    const door: Pt | undefined = tiles.flatMap((row, y) => row.map((tile, x) => (tile === T.DOOR ? { x, y } : null))).find(
+      (point): point is Pt => point !== null,
+    );
+    const shop = door
+      ? { x: Math.max(0, door.x - 1), y: Math.max(0, door.y - 2), front: { x: door.x, y: door.y + 1 } }
+      : { x: 0, y: 0, front: { x: 0, y: 0 } };
+    const exits: GenExit[] = def.exits.map((exit) => {
+      const geometry = exitGeometry(w, h, exit.side);
+      return {
+        side: exit.side,
+        to: exit.to,
+        tiles: geometry.tiles,
+        inner: exit.inner ?? geometry.inner,
+        dir: exit.dir ?? geometry.dir,
+      };
+    });
+    const spawn = def.spawn ?? { x: 4, y: 4, dir: 'down' as Dir };
+    return { w, h, tiles, flowers: [], spawn, shop, exits };
+  }
+
   const rng = mulberry32(def.seed);
   const phase = def.seed % 7;
   const base = def.kind === 'swamp' ? T.MUD : T.GRASS;

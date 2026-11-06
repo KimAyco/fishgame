@@ -1,17 +1,17 @@
 import Phaser from 'phaser';
 import { MAPS } from '../data/maps';
 import { mulberry32 } from '../logic/rng';
-import { hasSave, loadGame, resetGame, store } from '../save/storage';
+import { store } from '../save/storage';
 import { MULTIPLAYER_AVAILABLE } from '../net/config';
 import { net } from '../net/NetClient';
-import { getCode, getName, getOnline, setCode, setName, setOnline } from '../net/prefs';
-import { cleanName, normalizeCode } from '../net/protocol';
+import { getGameAccount, getGameToken, loadGameCatalog, loadPlayerSave, signOut } from '../net/gameApi';
 import { button, txt } from '../ui/ui';
 import { ensureTextures, WATER_FRAMES } from '../world/art';
 
 const TILE = 16;
 const PANEL_W = 124;
 const MAP = MAPS[0];
+const PORTRAIT_PANEL_H = 286;
 
 type Cell = 'grass' | 'water' | 'deep' | 'sand' | 'wood';
 
@@ -22,27 +22,29 @@ type Cell = 'grass' | 'water' | 'deep' | 'sand' | 'wood';
 export class TitleScene extends Phaser.Scene {
   private vw = 0;
   private vh = 0;
-  private confirmReset = false;
   private waterImgs: { img: Phaser.GameObjects.Image; key: string; ph: number }[] = [];
   private waterTick = 0;
   private fx!: Phaser.GameObjects.Graphics;
   private bang!: Phaser.GameObjects.Text;
   private angler = { x: 0, y: 0, bx: 0, by: 0 };
   private resizeTimer?: ReturnType<typeof setTimeout>;
+  private portraitLayout = false;
+  private portraitPanel = { x: 0, y: 0, w: 0 };
 
   constructor() {
     super('Title');
   }
 
   create(): void {
-    loadGame();
-    this.confirmReset = false;
     this.waterImgs = [];
     this.waterTick = 0;
 
     const w = this.scale.width;
     const h = this.scale.height;
-    const z = Math.max(2, Math.round(h / 225));
+    this.portraitLayout = w < h && w < 600;
+    const z = this.portraitLayout
+      ? Math.max(1, w / 300)
+      : Math.max(1, Math.floor(Math.min(w / 320, h / 225)));
     this.vw = w / z;
     this.vh = h / z;
     this.cameras.main.setBackgroundColor(0x3f7a3a).setZoom(z).centerOn(this.vw / 2, this.vh / 2);
@@ -169,6 +171,11 @@ export class TitleScene extends Phaser.Scene {
   // ---- menu -------------------------------------------------------------------
 
   private buildMenu(): void {
+    if (this.portraitLayout) {
+      this.buildPortraitMenu();
+      return;
+    }
+
     const x0 = 10;
     const top = 10;
     const bottom = this.vh - 10;
@@ -199,23 +206,8 @@ export class TitleScene extends Phaser.Scene {
     let by = Math.max(94, this.vh * 0.42);
     const lift = (b: ReturnType<typeof button>) => b.container.setDepth(depth + 3);
 
-    const hasData = hasSave();
-    lift(button(this, bx, by, bw, 20, hasData ? 'Continue' : 'Start', () => this.go()));
+    lift(button(this, bx, by, bw, 20, getGameToken() ? 'Continue' : 'Play Online', () => this.go()));
     by += 24;
-
-    if (hasData) {
-      const reset = button(this, bx, by, bw, 20, 'New game', () => {
-        if (!this.confirmReset) {
-          this.confirmReset = true;
-          reset.setLabel('Sure? Click again');
-          return;
-        }
-        resetGame();
-        this.go();
-      });
-      lift(reset);
-      by += 24;
-    }
 
     lift(button(this, bx, by, bw, 20, 'Fullscreen (F)', () => this.toggleFullscreen()));
 
@@ -223,25 +215,100 @@ export class TitleScene extends Phaser.Scene {
     txt(this, cx, bottom - 8, 'press SPACE to start', 6, '#ffe9a8', 0.5, 1).setDepth(depth + 1);
   }
 
+  private buildPortraitMenu(): void {
+    const depth = 9000;
+    const w = Math.min(this.vw - 24, 320);
+    const x = (this.vw - w) / 2;
+    const y = Math.max(12, (this.vh - PORTRAIT_PANEL_H) / 2);
+    this.portraitPanel = { x, y, w };
+
+    const panel = this.add.graphics().setDepth(depth);
+    panel.fillStyle(0x251a12, 0.94).fillRoundedRect(x, y, w, PORTRAIT_PANEL_H, 10);
+    panel.lineStyle(2, 0xd9b074, 0.95).strokeRoundedRect(x + 1, y + 1, w - 2, PORTRAIT_PANEL_H - 2, 9);
+    panel.lineStyle(1, 0x80613d, 0.8).strokeRoundedRect(x + 6, y + 6, w - 12, PORTRAIT_PANEL_H - 12, 6);
+
+    const cx = x + w / 2;
+    const shadowTxt = (top: number, label: string, size: number, color: string) => {
+      const shadow = txt(this, cx + 1, top + 2, label, size, '#000000', 0.5).setDepth(depth + 1).setAlpha(0.7);
+      const title = txt(this, cx, top, label, size, color, 0.5).setDepth(depth + 2);
+      return [shadow, title];
+    };
+    const logo = [...shadowTxt(y + 24, 'PIXEL', 24, '#ffe9a8'), ...shadowTxt(y + 50, 'FISHING', 24, '#a6e36a')];
+    this.tweens.add({ targets: logo, y: '+=1.5', duration: 1500, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+    txt(this, cx, y + 84, 'A cozy fishing adventure', 8, '#e8d8b0', 0.5).setDepth(depth + 1);
+
+    const buttonX = x + 18;
+    const buttonW = w - 36;
+    const lift = (item: ReturnType<typeof button>) => item.container.setDepth(depth + 3);
+    lift(button(this, buttonX, y + 112, buttonW, 40, getGameToken() ? 'Continue Fishing' : 'Play Online', () => this.go(), 11));
+    lift(button(this, buttonX, y + 160, buttonW, 34, 'Fullscreen', () => this.toggleFullscreen(), 10));
+
+    txt(this, cx, y + 270, 'Made for a little lakeside escape', 6, '#cdb98f', 0.5, 1).setDepth(depth + 1);
+  }
+
   // ---- multiplayer panel ------------------------------------------------------------
 
-  private nameInput: HTMLInputElement | null = null;
-  private codeInput: HTMLInputElement | null = null;
+  private multiplayerStatus?: Phaser.GameObjects.Text;
+  private starting = false;
 
   private go(): void {
-    this.savePrefs();
-    this.scene.start('Fishing', { mapId: store.data.lastMap });
+    if (this.starting) return;
+    if (!getGameToken()) {
+      this.scene.start('Auth');
+      return;
+    }
+    if (!MULTIPLAYER_AVAILABLE) {
+      this.multiplayerStatus?.setText('Online server is not configured').setColor('#ff9a8a');
+      return;
+    }
+    this.starting = true;
+    this.multiplayerStatus?.setText('Loading account and maps…').setColor('#ffd34d');
+    void this.enterWorld();
   }
 
-  private savePrefs(): void {
-    if (this.nameInput) setName(cleanName(this.nameInput.value));
-    if (this.codeInput) setCode(normalizeCode(this.codeInput.value));
+  private async enterWorld(): Promise<void> {
+    try {
+      await loadGameCatalog();
+      const { save } = await loadPlayerSave();
+      store.data = save;
+      this.scene.start('Fishing', { mapId: save.lastMap });
+    } catch (error) {
+      this.starting = false;
+      this.multiplayerStatus?.setText(error instanceof Error ? error.message : 'Could not load online game data').setColor('#ff9a8a');
+    }
   }
 
-  /** Name, room code, online toggle and server status, bottom right. */
+  /** Sign-in state and the connection status for mandatory online play. */
   private buildOnlinePanel(): void {
+    if (this.portraitLayout) {
+      const { x, y, w } = this.portraitPanel;
+      const account = getGameAccount();
+      this.multiplayerStatus = txt(
+        this,
+        x + w / 2,
+        y + 207,
+        account ? `Signed in as ${account.username}` : 'Sign in or create an account to begin.',
+        7,
+        '#cdb98f',
+        0.5,
+      ).setDepth(9001).setAlign('center');
+      if (account) {
+        const out = button(this, x + 18, y + 228, w - 36, 28, 'Sign out', () => {
+          signOut();
+          this.scene.restart();
+        }, 9);
+        out.container.setDepth(9002);
+      }
+      if (!MULTIPLAYER_AVAILABLE) this.multiplayerStatus.setText('Online server is not configured').setColor('#ff9a8a');
+      this.events.once('shutdown', () => {
+        this.multiplayerStatus = undefined;
+        this.starting = false;
+      });
+      return;
+    }
+
     const w = 134;
-    const h = 86;
+    const h = 58;
     const x = this.vw - 10 - w;
     const y = this.vh - 10 - h;
     const depth = 9000;
@@ -251,89 +318,31 @@ export class TitleScene extends Phaser.Scene {
     g.fillRect(x, y, w, h);
     g.lineStyle(1, 0xd9b074, 0.9);
     g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    txt(this, x + 6, y + 4, 'MULTIPLAYER', 6, '#ffe9a8').setDepth(depth + 1);
-
-    if (!MULTIPLAYER_AVAILABLE) {
-      txt(this, x + 6, y + 18, 'No server is set up for\nthis build, so the game\nruns single-player.', 6, '#cdb98f').setDepth(depth + 1);
-      return;
+    txt(this, x + 6, y + 4, 'ONLINE ACCOUNT', 6, '#ffe9a8').setDepth(depth + 1);
+    const account = getGameAccount();
+    this.multiplayerStatus = txt(
+      this,
+      x + 6,
+      y + 18,
+      account ? `Signed in: ${account.username}` : 'Sign in or create an account to play.',
+      6,
+      '#cdb98f',
+    ).setDepth(depth + 1);
+    if (account) {
+      const out = button(this, x + 6, y + 37, w - 12, 15, 'Sign out', () => {
+        signOut();
+        this.scene.restart();
+      });
+      out.container.setDepth(depth + 2);
+    } else {
+      const auth = button(this, x + 6, y + 37, w - 12, 15, 'Sign in / Sign up', () => this.scene.start('Auth'));
+      auth.container.setDepth(depth + 2);
     }
-
-    // HTML text fields sit over the canvas; their position follows the canvas size and zoom
-    const rect = this.game.canvas.getBoundingClientRect();
-    const k = (this.cameras.main.zoom * rect.width) / this.scale.width;
-    const field = (ly: number, value: string, placeholder: string, max: number): HTMLInputElement => {
-      const el = document.createElement('input');
-      el.type = 'text';
-      el.value = value;
-      el.placeholder = placeholder;
-      el.maxLength = max;
-      el.autocomplete = 'off';
-      el.spellcheck = false;
-      Object.assign(el.style, {
-        position: 'fixed',
-        left: `${rect.left + (x + 6) * k}px`,
-        top: `${rect.top + (y + ly) * k}px`,
-        width: `${(w - 12) * k}px`,
-        height: `${13 * k}px`,
-        boxSizing: 'border-box',
-        padding: `0 ${3 * k}px`,
-        font: `${Math.max(9, 6.5 * k)}px monospace`,
-        color: '#fff4d6',
-        background: '#2b1d10',
-        border: '1px solid #d9b074',
-        outline: 'none',
-        zIndex: '5',
-      });
-      // typing must not reach the game's own keys (SPACE starts, F is fullscreen)
-      el.addEventListener('keydown', (e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') el.blur();
-      });
-      el.addEventListener('keyup', (e) => e.stopPropagation());
-      document.body.appendChild(el);
-      return el;
-    };
-
-    this.nameInput = field(14, getName(), 'Your name', 16);
-    this.codeInput = field(30, getCode(), 'Room code (optional)', 12);
-    this.codeInput.addEventListener('input', () => {
-      const c = this.codeInput!;
-      const clean = normalizeCode(c.value);
-      if (clean !== c.value) c.value = clean;
+    if (!MULTIPLAYER_AVAILABLE) this.multiplayerStatus?.setText('Online server is not configured').setColor('#ff9a8a');
+    this.events.once('shutdown', () => {
+      this.multiplayerStatus = undefined;
+      this.starting = false;
     });
-
-    const toggle = button(this, x + 6, y + 47, w - 12, 15, '', () => {
-      setOnline(!getOnline());
-      paint();
-    });
-    toggle.container.setDepth(depth + 2);
-    const status = txt(this, x + 6, y + 67, '', 6, '#cdb98f').setDepth(depth + 1);
-
-    const paint = () => {
-      toggle.setLabel(getOnline() ? 'Online: ON' : 'Online: OFF');
-      if (!getOnline()) status.setText('Playing alone').setColor('#cdb98f');
-    };
-    paint();
-
-    // wake the server now (a free-tier host sleeps when idle) so it is ready when you press Start
-    const cleanup = () => {
-      this.nameInput?.remove();
-      this.codeInput?.remove();
-      this.nameInput = null;
-      this.codeInput = null;
-    };
-    this.events.once('shutdown', cleanup);
-
-    if (getOnline()) {
-      status.setText('Checking the server...').setColor('#ffd34d');
-      const slow = this.time.delayedCall(3000, () => status.active && getOnline() && status.setText('Waking the server...\n(can take a minute)').setColor('#ffd34d'));
-      void net.warmUp().then((ok) => {
-        slow.remove();
-        if (!status.active || !this.scene.isActive('Title')) return;
-        if (!getOnline()) return;
-        status.setText(ok ? 'Server ready' : 'Server unreachable').setColor(ok ? '#a6e36a' : '#ff9a8a');
-      });
-    }
   }
 
   // ---- animation ------------------------------------------------------------------

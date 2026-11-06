@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { BAIT_BY_ID } from '../data/gear';
 import { MAP_BY_ID } from '../data/maps';
-import { consumeBait, currentRod, levelOf, recordCatch, xpForLevel } from '../logic/economy';
+import { currentRod, levelOf, xpForLevel } from '../logic/economy';
 import {
   biteDelay,
   FishContext,
@@ -10,26 +10,43 @@ import {
   ReelState,
   reelQuality,
   rollFish,
-  rollSize,
   stepReel,
   zoneForDepth,
 } from '../logic/fishing';
+import { FISH_BY_ID } from '../data/fish';
 import { defaultRng } from '../logic/rng';
 import { gameHour, timeOfDay, weatherAt } from '../logic/time';
-import { persist, session, store } from '../save/storage';
+import { session, store } from '../save/storage';
 import type { FishDef, MapDef, ZoneDef } from '../types';
 import { lerpColor, nightFactor, RARITY_COLOR, txt } from '../ui/ui';
+import { Hud } from '../ui/hud';
+import { BagModal, BaitModal, Modal } from '../ui/modals';
+import { bagValue } from '../logic/bag';
 import { ensureTextures, WATER_FRAMES } from '../world/art';
 import { ensureFishSprites } from '../world/fishart';
 import { worldMs } from '../logic/clock';
 import { net } from '../net/NetClient';
-import { getCode, getName, getOnline } from '../net/prefs';
+import {
+  equipBaitOnline,
+  getGameToken,
+  loadWorldObjects,
+  placeItem,
+  recordCatchOnline,
+  recordEscapeOnline,
+  saveCheckpoint,
+  useBaitOnline,
+  type SharedWorldObject,
+} from '../net/gameApi';
 import { EMOTE_GLYPH, FISH_INTERVAL_MS, FishPayload, MOVE_INTERVAL_MS, MovePayload, roundPos, SendThrottle, toFishState } from '../net/protocol';
 import { Bubble, RemotePlayers } from '../net/remotePlayers';
 import { drawRig, rodTipAt } from '../world/rig';
 import { Dir, DIRS, GeneratedMap, generateMap, isSolid, isWater, T, TILE } from '../world/mapgen';
 
 type Phase = 'idle' | 'charging' | 'casting' | 'waiting' | 'bite' | 'reeling' | 'result';
+type MobileControl =
+  | { type: 'move'; x: number; y: number }
+  | { type: 'fish'; pressed: boolean }
+  | { type: 'action'; action: 'map' | 'bag' | 'bait' | 'book' | 'interact' | 'boat' | 'tent' };
 
 const SPEED = 62;
 const CAST_TIME = 0.5;
@@ -58,7 +75,31 @@ export class FishingScene extends Phaser.Scene {
   private wasd!: Record<'W' | 'A' | 'S' | 'D', Phaser.Input.Keyboard.Key>;
   private space!: Phaser.Input.Keyboard.Key;
   private pointerHeld = false;
+  private mobileFishHeld = false;
+  private mobileMove = { x: 0, y: 0 };
   private prevHeld = false;
+  private readonly onMobileControl = (event: Event): void => {
+    const control = (event as CustomEvent<MobileControl>).detail;
+    if (!control) return;
+    if (control.type === 'move') {
+      this.mobileMove.x = Number.isFinite(control.x) ? Phaser.Math.Clamp(control.x, -1, 1) : 0;
+      this.mobileMove.y = Number.isFinite(control.y) ? Phaser.Math.Clamp(control.y, -1, 1) : 0;
+      return;
+    }
+    if (control.type === 'fish') {
+      this.mobileFishHeld = control.pressed;
+      return;
+    }
+    switch (control.action) {
+      case 'map': this.openMap(); break;
+      case 'bag': this.toggleBag(); break;
+      case 'bait': this.toggleBait(); break;
+      case 'book': this.openBook(); break;
+      case 'interact': this.interact(); break;
+      case 'boat': this.placeBoat(); break;
+      case 'tent': this.placeTent(); break;
+    }
+  };
 
   private wg!: Phaser.GameObjects.Graphics;
   private fx!: Phaser.GameObjects.Graphics;
@@ -68,6 +109,10 @@ export class FishingScene extends Phaser.Scene {
   private power = 0;
   private powerDir = 1;
   private castT = 0;
+  private castAnimationDone = false;
+  private baitRequestPending = false;
+  private castRequestId = 0;
+  private baitIdBeforeCast = 'dough';
   private target = { tx: 0, ty: 0, deep: false };
   private zone!: ZoneDef;
   private biteTimer = 0;
@@ -87,14 +132,21 @@ export class FishingScene extends Phaser.Scene {
   private selfBubble?: Bubble;
   private netUnsubs: (() => void)[] = [];
   private chatInput: HTMLInputElement | null = null;
+  private worldObjects: SharedWorldObject[] = [];
+  private worldObjectDrawings: Phaser.GameObjects.GameObject[] = [];
+  private onBoat = false;
+  private boatSaveInFlight = false;
+  private boatTile = '';
+  private boatPosition = { x: 0, y: 0 };
   private moveThrottle = new SendThrottle<MovePayload>(MOVE_INTERVAL_MS, (a, b) => a.x === b.x && a.y === b.y && a.dir === b.dir && a.moving === b.moving);
   private fishThrottle = new SendThrottle<FishPayload>(FISH_INTERVAL_MS, (a, b) => a.state === b.state && a.bx === b.bx && a.by === b.by);
   private popupReadyAt = 0;
   private debug = false;
   private exitCooldown = 0;
 
-  private hudTop!: Phaser.GameObjects.Text;
-  private hudBottom!: Phaser.GameObjects.Text;
+  private hud!: Hud;
+  /** the open bag / bait panel, if any; while set the player can't walk or cast */
+  private modal: { kind: 'bag' | 'bait'; panel: Modal } | null = null;
   private hint!: Phaser.GameObjects.Text;
   private alert!: Phaser.GameObjects.Text;
   private zoneLabel!: Phaser.GameObjects.Text;
@@ -114,18 +166,27 @@ export class FishingScene extends Phaser.Scene {
   // ---- setup --------------------------------------------------------------
 
   create(): void {
+    document.body.dataset.scene = 'Fishing';
+    window.addEventListener('pixel-fishing:mobile-control', this.onMobileControl);
     this.uiCam = undefined;
     this.layout();
     ensureTextures(this, this.map);
     ensureFishSprites(this);
     this.gen = generateMap(this.map);
     store.data.lastMap = this.map.id;
-    persist();
+    this.worldObjects = [];
+    this.worldObjectDrawings = [];
+    this.onBoat = false;
+    this.boatSaveInFlight = false;
+    this.boatTile = '';
 
     this.phase = 'idle';
     this.power = 0;
     this.prevHeld = false;
     this.pointerHeld = false;
+    this.mobileFishHeld = false;
+    this.mobileMove.x = 0;
+    this.mobileMove.y = 0;
     this.hooked = null;
     this.popup = [];
     this.debug = false;
@@ -148,19 +209,21 @@ export class FishingScene extends Phaser.Scene {
     this.fx = this.add.graphics().setDepth(DEPTH_SCREEN_FX);
     this.ui = this.add.graphics().setDepth(DEPTH_UI);
     const hud = (t: Phaser.GameObjects.Text) => t.setDepth(DEPTH_UI + 1);
-    this.hudTop = hud(txt(this, 6, 4, '', 8));
-    this.hudBottom = hud(txt(this, 6, 14, '', 7, '#c8d0d8'));
+    this.modal = null;
+    this.hud = new Hud(this, DEPTH_UI);
     this.hint = hud(txt(this, this.vw / 2, this.vh - 4, '', 7, '#ffffff', 0.5, 1));
-    this.debugText = hud(txt(this, 6, 28, '', 7, '#9aff9a')).setVisible(false);
-    this.toast = hud(txt(this, this.vw / 2, 34, '', 9, '#ffffff', 0.5, 0)).setVisible(false);
+    this.debugText = hud(txt(this, 6, 52, '', 7, '#9aff9a')).setVisible(false);
+    this.toast = hud(txt(this, this.vw / 2, 42, '', 9, '#ffffff', 0.5, 0)).setVisible(false);
     this.netText = hud(txt(this, this.vw - 6, 4, '', 7, '#cdb98f', 1, 0));
-    this.hudObjs = [this.fx, this.ui, this.hudTop, this.hudBottom, this.hint, this.debugText, this.toast, this.netText];
+    this.hudObjs = [this.fx, this.ui, ...this.hud.objs, this.hint, this.debugText, this.toast, this.netText];
 
     this.uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
     this.uiCam.ignore(worldObjs);
     this.layout();
     this.cameras.main.ignore(this.hudObjs);
     this.setupNet();
+    void this.refreshWorldObjects(true);
+    this.time.addEvent({ delay: 12000, loop: true, callback: () => void this.refreshWorldObjects(false) });
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, this.gen.w * TILE, this.gen.h * TILE);
@@ -172,16 +235,26 @@ export class FishingScene extends Phaser.Scene {
     this.cursors = kb.createCursorKeys();
     this.wasd = kb.addKeys('W,A,S,D') as typeof this.wasd;
     this.space = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-    kb.on('keydown-B', this.cycleBait, this);
+    kb.on('keydown-B', this.toggleBait, this);
+    kb.on('keydown-I', this.toggleBag, this);
+    kb.on('keydown-TAB', this.cycleBait, this);
+    kb.addCapture(Phaser.Input.Keyboard.KeyCodes.TAB); // keep Tab from moving browser focus
     kb.on('keydown-M', this.openMap, this);
     kb.on('keydown-ESC', this.openMap, this);
     kb.on('keydown-F', this.openBook, this);
     kb.on('keydown-F3', this.toggleDebug, this);
+    kb.on('keydown-E', this.interact, this);
+    kb.on('keydown-P', this.placeBoat, this);
+    kb.on('keydown-O', this.placeTent, this);
     kb.on('keydown', this.onKeyDown, this);
+    void saveCheckpoint(this.map.id, this.px, this.py, this.dir).catch((error: unknown) => {
+      this.showToast(error instanceof Error ? `Cloud save failed: ${error.message}` : 'Cloud save failed', '#ff9a8a');
+    });
 
     this.scale.on('resize', this.layout, this);
     this.input.on('pointerdown', () => (this.pointerHeld = true));
     this.input.on('pointerup', () => (this.pointerHeld = false));
+    this.input.on('wheel', (_p: unknown, _o: unknown, _dx: number, dy: number) => this.modal?.panel.wheel(dy));
 
     this.time.addEvent({
       delay: 130,
@@ -202,12 +275,21 @@ export class FishingScene extends Phaser.Scene {
     });
 
     this.events.once('shutdown', () => {
+      window.removeEventListener('pixel-fishing:mobile-control', this.onMobileControl);
+      if (document.body.dataset.scene === 'Fishing') delete document.body.dataset.scene;
       this.scale.off('resize', this.layout, this);
-      kb.off('keydown-B', this.cycleBait, this);
+      kb.off('keydown-B', this.toggleBait, this);
+      kb.off('keydown-I', this.toggleBag, this);
+      kb.off('keydown-TAB', this.cycleBait, this);
+      kb.removeCapture(Phaser.Input.Keyboard.KeyCodes.TAB);
+      this.closeModal();
       kb.off('keydown-M', this.openMap, this);
       kb.off('keydown-ESC', this.openMap, this);
       kb.off('keydown-F', this.openBook, this);
       kb.off('keydown-F3', this.toggleDebug, this);
+      kb.off('keydown-E', this.interact, this);
+      kb.off('keydown-P', this.placeBoat, this);
+      kb.off('keydown-O', this.placeTent, this);
       kb.off('keydown', this.onKeyDown, this);
       this.closeChat();
       for (const off of this.netUnsubs) off();
@@ -220,19 +302,24 @@ export class FishingScene extends Phaser.Scene {
       kb.removeKey(this.space);
       this.input.off('pointerdown');
       this.input.off('pointerup');
+      this.input.off('wheel');
     });
   }
 
-  /** Sizes both cameras to the canvas with an integer zoom (crisp pixels) and re-anchors the HUD. */
+  /** Keeps portrait gameplay close while sizing both cameras and re-anchoring the HUD. */
   private layout(): void {
     const w = this.scale.width;
     const h = this.scale.height;
     if (w <= 0 || h <= 0) return;
-    const z = Math.max(2, Math.round(h / 225));
+    const portraitPhone = w < h && w < 760;
+    const z = portraitPhone
+      ? Math.max(2, Math.floor(Math.min(w / 250, h / 420)))
+      : Math.max(1, Math.floor(Math.min(w / 320, h / 180)));
     this.vw = w / z;
     this.vh = h / z;
     this.cameras.main.setSize(w, h).setZoom(z);
     this.uiCam?.setSize(w, h).setZoom(z).centerOn(this.vw / 2, this.vh / 2);
+    this.modal?.panel.refresh();
     for (const o of [...this.hudObjs, this.alert, this.zoneLabel]) {
       if (o?.active && o instanceof Phaser.GameObjects.Text) o.setResolution(z);
     }
@@ -255,7 +342,8 @@ export class FishingScene extends Phaser.Scene {
         const t = tiles[y][x];
         switch (t) {
           case T.WATER:
-          case T.DEEP: {
+          case T.DEEP:
+          case T.SHALLOW_WATER: {
             const key = `${t === T.DEEP ? 'deep' : 'water'}_${id}`;
             const ph = (x + y * 3) % WATER_FRAMES;
             this.waterImgs.push({ img: place(`${key}_${ph}`, x, y), key, ph });
@@ -272,9 +360,11 @@ export class FishingScene extends Phaser.Scene {
             place(`sand_${hash(x, y, 2)}`, x, y);
             break;
           case T.PATH:
+          case T.MARKET_FLOOR:
             place(`path_${hash(x, y, 2)}`, x, y);
             break;
-          case T.WOOD: {
+          case T.WOOD:
+          case T.BRIDGE: {
             // water shows through between boards at the sides of docks
             place('wood', x, y);
             break;
@@ -296,8 +386,14 @@ export class FishingScene extends Phaser.Scene {
         else if (t === T.ROCK) place('rock', x, y).setDepth((y + 1) * TILE);
       }
     }
-    const s = this.gen.shop;
-    this.add.image(s.x * TILE, s.y * TILE - TILE, 'shop').setOrigin(0, 0).setDepth((s.y + 2) * TILE);
+    if (this.map.isMarket) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (tiles[y][x] !== T.DOOR) continue;
+          this.add.image((x - 1) * TILE, (y - 2) * TILE, 'shop').setOrigin(0, 0).setDepth(y * TILE);
+        }
+      }
+    }
   }
 
   private placePlayer(): void {
@@ -352,17 +448,20 @@ export class FishingScene extends Phaser.Scene {
 
   private saveSpot(): void {
     session.pos = { mapId: this.map.id, x: this.px, y: this.py, dir: this.dir };
-    persist();
+    void saveCheckpoint(this.map.id, this.px, this.py, this.dir).catch((error: unknown) => {
+      this.showToast(error instanceof Error ? `Cloud save failed: ${error.message}` : 'Cloud save failed', '#ff9a8a');
+    });
   }
 
   private openMap(): void {
+    if (this.modal) return this.closeModal(); // ESC closes a panel before it leaves the scene
     if (this.phase !== 'idle') return;
     this.saveSpot();
     this.scene.start('WorldMap');
   }
 
   private openBook(): void {
-    if (this.phase !== 'idle') return;
+    if (this.modal || this.phase !== 'idle') return;
     this.saveSpot();
     this.scene.start('Book');
   }
@@ -372,12 +471,205 @@ export class FishingScene extends Phaser.Scene {
     this.debugText.setVisible(this.debug);
   }
 
-  private cycleBait(): void {
-    if (this.phase !== 'idle') return;
+  /** Tab: swap to the next bait you own without opening the picker. */
+  private async cycleBait(): Promise<void> {
+    if (this.modal || this.phase !== 'idle') return;
     const d = store.data;
     const ids = ['dough', ...Object.keys(d.bait).filter((id) => (d.bait[id] ?? 0) > 0)];
-    d.baitId = ids[(ids.indexOf(d.baitId) + 1) % ids.length];
-    persist();
+    const baitId = ids[(ids.indexOf(d.baitId) + 1) % ids.length];
+    try {
+      await equipBaitOnline(baitId);
+      d.baitId = baitId;
+      this.showToast(`Using ${(BAIT_BY_ID[d.baitId] ?? BAIT_BY_ID.dough).name}`, '#c8d0d8', 1200);
+    } catch (error) {
+      this.showToast(error instanceof Error ? error.message : 'Could not change bait', '#ff9a8a');
+    }
+  }
+
+  private toggleBait(): void {
+    this.togglePanel('bait');
+  }
+
+  private toggleBag(): void {
+    this.togglePanel('bag');
+  }
+
+  /** Opens the bag or bait panel (only while standing idle), or closes it if it is already open. */
+  private togglePanel(kind: 'bag' | 'bait'): void {
+    if (this.modal) {
+      const same = this.modal.kind === kind;
+      this.closeModal();
+      if (same) return;
+    }
+    if (this.phase !== 'idle' || this.chatInput) return;
+    this.moving = false;
+    this.player.setTexture(`p_${this.dir}_0`);
+    const host = {
+      scene: this as Phaser.Scene,
+      view: () => ({ vw: this.vw, vh: this.vh }),
+      depth: DEPTH_UI + 10,
+      register: (o: Phaser.GameObjects.GameObject) => this.cameras.main.ignore(o),
+      nearShop: () => this.nearShop(),
+      toast: (s: string, color?: string, ms?: number) => this.showToast(s, color, ms),
+      close: () => this.closeModal(),
+    };
+    const panel = kind === 'bag' ? BagModal.open(host) : BaitModal.open(host);
+    this.modal = { kind, panel };
+  }
+
+  private closeModal(): void {
+    if (!this.modal) return;
+    this.modal.panel.destroy();
+    this.modal = null;
+    this.pointerHeld = false; // the click that closed a panel must not start a cast
+  }
+
+  /** True while facing the shop door, which is where the bag can be sold. */
+  private nearShop(): boolean {
+    if (!this.map.isMarket) return false;
+    const { dx, dy } = DIRS[this.dir];
+    const { tx, ty } = this.playerTile();
+    const ahead = this.tileAt(tx + dx, ty + dy);
+    return ahead === T.DOOR || ahead === T.SHOP;
+  }
+
+  private async refreshWorldObjects(showError: boolean): Promise<void> {
+    try {
+      const objects = await loadWorldObjects(this.map.id);
+      if (!this.scene.isActive('Fishing')) return;
+      this.worldObjects = objects;
+      for (const drawing of this.worldObjectDrawings) drawing.destroy();
+      this.worldObjectDrawings = [];
+      for (const object of objects) {
+        if (object.x === null || object.y === null) continue;
+        const x = object.x;
+        const y = object.y;
+        const graphic = this.add.graphics().setDepth(y);
+        if (object.kind === 'boat') {
+          graphic.fillStyle(0x6b3f24, 1).fillEllipse(x, y, 22, 8);
+          graphic.fillStyle(0xd9b074, 1).fillRect(x - 1, y - 10, 2, 13);
+          graphic.lineStyle(1, 0xffe9c4, 1).strokeEllipse(x, y, 22, 8);
+        } else {
+          graphic.fillStyle(0xa34f35, 1).fillTriangle(x - 9, y - 2, x + 9, y - 2, x, y - 14);
+          graphic.fillStyle(0xe4c58a, 1).fillRect(x - 7, y - 3, 14, 8);
+        }
+        this.uiCam?.ignore(graphic);
+        this.worldObjectDrawings.push(graphic);
+        if (!object.ownedByMe) {
+          const label = txt(this, x, y - 18, object.ownerName, 6, '#fff4d6', 0.5, 1).setDepth(y + 1);
+          this.uiCam?.ignore(label);
+          this.worldObjectDrawings.push(label);
+        }
+      }
+    } catch (error) {
+      if (showError && this.scene.isActive('Fishing')) {
+        this.showToast(error instanceof Error ? `World objects unavailable: ${error.message}` : 'World objects unavailable', '#ff9a8a');
+      }
+    }
+  }
+
+  private nearbyOwned(kind: 'boat' | 'tent'): SharedWorldObject | undefined {
+    return this.worldObjects.find(
+      (object) =>
+        object.kind === kind &&
+        object.ownedByMe &&
+        object.x !== null &&
+        object.y !== null &&
+        Math.hypot(object.x - this.px, object.y - this.py) <= 23,
+    );
+  }
+
+  private interact(): void {
+    if (this.modal || this.phase !== 'idle') return;
+    if (this.onBoat) {
+      const { tx, ty } = this.playerTile();
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const x = tx + dx;
+        const y = ty + dy;
+        const tile = this.tileAt(x, y);
+        if (isWater(tile) || isSolid(tile)) continue;
+        this.onBoat = false;
+        this.px = x * TILE + TILE / 2;
+        this.py = (y + 1) * TILE - 1;
+        this.player.setPosition(this.px, this.py);
+        this.showToast('You left the boat.', '#c8d0d8');
+        return;
+      }
+      this.showToast('Move closer to shore to leave the boat.', '#ffd34d');
+      return;
+    }
+
+    const tent = this.nearbyOwned('tent');
+    if (tent) {
+      this.saveSpot();
+      this.scene.start('Tent', { tentId: tent.id, mapId: this.map.id });
+      return;
+    }
+    const boat = this.nearbyOwned('boat');
+    if (boat && boat.x !== null && boat.y !== null) {
+      this.onBoat = true;
+      this.px = boat.x;
+      this.py = boat.y;
+      this.boatPosition = { x: boat.x, y: boat.y };
+      this.boatTile = `${Math.floor(boat.x / TILE)},${Math.floor(boat.y / TILE)}`;
+      this.player.setPosition(this.px, this.py);
+      this.showToast('On board. Move through water; press E near shore to leave.', '#8aff8a', 2500);
+      return;
+    }
+    this.showToast('Stand beside your boat or tent to use it.', '#c8d0d8');
+  }
+
+  private placeBoat(): void {
+    this.placeFacingItem('boat');
+  }
+
+  private placeTent(): void {
+    this.placeFacingItem('tent');
+  }
+
+  private placeFacingItem(kind: 'boat' | 'tent'): void {
+    if (this.modal || this.phase !== 'idle' || this.onBoat) return;
+    const owned = store.data.placeables.find((placeable) => placeable.kind === kind);
+    if (!owned) {
+      this.showToast(`Buy a ${kind} at the market first.`, '#ffd34d');
+      return;
+    }
+    const { tx, ty } = this.playerTile();
+    const { dx, dy } = DIRS[this.dir];
+    void placeItem(owned.kind, this.map.id, tx + dx, ty + dy).then(
+      async (placed) => {
+        const index = store.data.placeables.findIndex((placeable) => placeable.kind === placed.kind);
+        if (index >= 0) store.data.placeables[index] = placed;
+        await this.refreshWorldObjects(false);
+        this.showToast(`${placed.kind === 'boat' ? 'Boat' : 'Tent'} deployed. Press E beside it to use.`, '#8aff8a', 2300);
+      },
+      (error: unknown) => this.showToast(error instanceof Error ? error.message : 'Could not place item', '#ff9a8a'),
+    );
+  }
+
+  private persistBoatPosition(): void {
+    const { tx, ty } = this.playerTile();
+    const tileKey = `${tx},${ty}`;
+    if (this.boatSaveInFlight || tileKey === this.boatTile) return;
+    this.boatSaveInFlight = true;
+    void placeItem('boat', this.map.id, tx, ty).then(
+      async (boat) => {
+        this.boatTile = tileKey;
+        this.boatPosition = { x: this.px, y: this.py };
+        const index = store.data.placeables.findIndex((placeable) => placeable.kind === 'boat');
+        if (index >= 0) store.data.placeables[index] = boat;
+        await this.refreshWorldObjects(false);
+      },
+      (error: unknown) => {
+        this.onBoat = false;
+        this.px = this.boatPosition.x;
+        this.py = this.boatPosition.y;
+        this.player.setPosition(this.px, this.py);
+        this.showToast(error instanceof Error ? `Boat movement failed: ${error.message}` : 'Boat movement failed', '#ff9a8a');
+      },
+    ).finally(() => {
+      this.boatSaveInFlight = false;
+    });
   }
 
   private showToast(s: string, color = '#ffffff', ms = 1800): void {
@@ -415,6 +707,7 @@ export class FishingScene extends Phaser.Scene {
   // ---- movement -------------------------------------------------------------
 
   private blockedAt(x: number, y: number): boolean {
+    if (this.onBoat) return !isWater(this.tileAt(Math.floor(x / TILE), Math.floor((y - 1) / TILE)));
     const r = 4;
     for (const [ox, oy] of [[-r, -5], [r, -5], [-r, 0], [r, 0]]) {
       if (isSolid(this.tileAt(Math.floor((x + ox) / TILE), Math.floor((y + oy - 1) / TILE)))) return true;
@@ -429,12 +722,15 @@ export class FishingScene extends Phaser.Scene {
     if (this.cursors.right.isDown || this.wasd.D.isDown) vx += 1;
     if (this.cursors.up.isDown || this.wasd.W.isDown) vy -= 1;
     if (this.cursors.down.isDown || this.wasd.S.isDown) vy += 1;
+    vx += this.mobileMove.x;
+    vy += this.mobileMove.y;
 
-    this.moving = vx !== 0 || vy !== 0;
+    const magnitude = Math.hypot(vx, vy);
+    this.moving = magnitude > 0.1;
     if (this.moving) {
-      if (vx !== 0 && vy !== 0) {
-        vx *= Math.SQRT1_2;
-        vy *= Math.SQRT1_2;
+      if (magnitude > 1) {
+        vx /= magnitude;
+        vy /= magnitude;
       }
       const nx = this.px + vx * SPEED * dt;
       if (!this.blockedAt(nx, this.py)) this.px = nx;
@@ -451,6 +747,7 @@ export class FishingScene extends Phaser.Scene {
     const frame = this.moving ? 1 + (Math.floor(this.walkT / 0.14) % 2) : 0;
     this.player.setTexture(`p_${this.dir}_${frame}`).setPosition(Math.round(this.px), Math.round(this.py));
     this.player.setDepth(this.py);
+    if (this.onBoat) this.persistBoatPosition();
   }
 
   private checkExits(): void {
@@ -460,8 +757,8 @@ export class FishingScene extends Phaser.Scene {
       if (!e.tiles.some((p) => p.x === tx && p.y === ty)) continue;
       const target = MAP_BY_ID[e.to];
       if (store.data.maps.includes(e.to)) {
-        persist();
         session.pos = undefined;
+        this.saveSpot();
         this.scene.restart({ mapId: e.to, from: this.map.id });
         return;
       }
@@ -478,7 +775,7 @@ export class FishingScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     const dt = Math.min(delta / 1000, 0.05);
-    const held = this.space.isDown || this.pointerHeld;
+    const held = !this.modal && (this.space.isDown || this.pointerHeld || this.mobileFishHeld);
     const pressed = held && !this.prevHeld;
     const released = !held && this.prevHeld;
     this.prevHeld = held;
@@ -486,6 +783,7 @@ export class FishingScene extends Phaser.Scene {
 
     switch (this.phase) {
       case 'idle':
+        if (this.modal) break; // a panel is open: stand still
         this.handleMove(dt);
         this.checkExits();
         if (pressed) this.tryAction();
@@ -512,7 +810,10 @@ export class FishingScene extends Phaser.Scene {
         const ty = this.target.ty * TILE + TILE / 2;
         this.bobber.x = tip.x + (tx - tip.x) * t;
         this.bobber.y = tip.y + (ty - tip.y) * t - Math.sin(t * Math.PI) * 28;
-        if (t >= 1) this.land();
+        if (t >= 1 && !this.castAnimationDone) {
+          this.castAnimationDone = true;
+          if (!this.baitRequestPending) this.land();
+        }
         break;
       }
 
@@ -535,7 +836,7 @@ export class FishingScene extends Phaser.Scene {
           this.reel = newReel();
           this.phase = 'reeling';
         } else if (this.hookTimer <= 0) {
-          store.data.stats.escapes++;
+          this.recordEscape();
           this.showToast('It got away...', '#ff9a8a');
           this.resetToIdle();
         }
@@ -552,8 +853,7 @@ export class FishingScene extends Phaser.Scene {
         this.bobber.y = by + (tip.y - by) * p * 0.8 + Math.sin(this.now() / 70) * 1.2;
         if (status === 'won') this.finishCatch(fish);
         else if (status === 'lost') {
-          store.data.stats.escapes++;
-          persist();
+          this.recordEscape();
           this.showToast(`The ${fish.name} broke free!`, '#ff9a8a');
           this.resetToIdle();
         }
@@ -578,10 +878,7 @@ export class FishingScene extends Phaser.Scene {
   }
 
   private tryAction(): void {
-    const { dx, dy } = DIRS[this.dir];
-    const { tx, ty } = this.playerTile();
-    const ahead = this.tileAt(tx + dx, ty + dy);
-    if (ahead === T.DOOR || ahead === T.SHOP) {
+    if (this.nearShop()) {
       this.saveSpot();
       this.scene.start('Shop');
       return;
@@ -603,15 +900,35 @@ export class FishingScene extends Phaser.Scene {
       this.resetToIdle();
       return;
     }
-    const bait = consumeBait(store.data);
-    store.data.stats.casts++;
-    persist();
-    if (bait.id === 'dough' && store.data.baitId === 'dough' && this.ctx().bait.id !== 'dough') this.showToast('Out of bait. Switched to dough.', '#ffd34d');
+
+    const requestId = ++this.castRequestId;
+    this.baitIdBeforeCast = store.data.baitId;
+    this.baitRequestPending = true;
+    this.castAnimationDone = false;
     this.target = target;
     const tip = this.rodTip();
     this.bobber = { x: tip.x, y: tip.y };
     this.castT = 0;
     this.phase = 'casting';
+
+    void useBaitOnline().then((result) => {
+      if (requestId !== this.castRequestId) return;
+      store.data.baitId = result.baitId;
+      if (result.usedBaitId !== 'dough') store.data.bait[result.usedBaitId] = result.quantity;
+      store.data.stats.casts++;
+      this.baitRequestPending = false;
+      if (result.usedBaitId === 'dough' && this.baitIdBeforeCast !== 'dough') {
+        this.showToast('Out of bait. Switched to dough.', '#ffd34d');
+      }
+      if (this.castAnimationDone && this.phase === 'casting') this.land();
+    }).catch((error: unknown) => {
+      if (requestId !== this.castRequestId) return;
+      this.baitRequestPending = false;
+      if (this.phase === 'casting') {
+        this.resetToIdle();
+        this.showToast(error instanceof Error ? `Cast failed: ${error.message}` : 'Cast failed', '#ff9a8a');
+      }
+    });
   }
 
   private land(): void {
@@ -627,18 +944,55 @@ export class FishingScene extends Phaser.Scene {
   }
 
   private resetToIdle(): void {
+    this.castRequestId++;
+    this.castAnimationDone = false;
+    this.baitRequestPending = false;
     this.hooked = null;
     this.phase = 'idle';
   }
 
-  private finishCatch(fish: FishDef): void {
+  private finishCatch(_fish: FishDef): void {
     const quality = reelQuality(this.reel);
-    const size = rollSize(defaultRng, fish);
-    const out = recordCatch(store.data, fish, size, quality);
-    persist();
     this.phase = 'result';
-    this.popupReadyAt = this.now() + 450;
-    this.showCatchPopup(fish, size, quality, out);
+    this.popupReadyAt = Number.POSITIVE_INFINITY;
+    const previousXp = store.data.xp;
+    void recordCatchOnline(this.map.id, this.zone.id, quality).then((result) => {
+      const fish = FISH_BY_ID[result.catch.fishId];
+      if (!fish) throw new Error(`Unknown fish returned by server: ${result.catch.fishId}`);
+      const prior = store.data.book[fish.id];
+      store.data.inventory.push({
+        id: result.catch.id,
+        fishId: fish.id,
+        size: result.catch.size,
+        quality: result.catch.quality,
+        value: result.catch.value,
+      });
+      store.data.book[fish.id] = {
+        count: (prior?.count ?? 0) + 1,
+        bestSize: Math.max(prior?.bestSize ?? 0, result.catch.size),
+      };
+      store.data.xp += result.xpGained;
+      store.data.stats.catches++;
+      this.popupReadyAt = this.now() + 450;
+      this.showCatchPopup(fish, result.catch.size, result.catch.quality, {
+        value: result.catch.value,
+        isNew: !prior,
+        isRecord: !!prior && result.catch.size > prior.bestSize,
+        leveledUp: levelOf(store.data.xp) > levelOf(previousXp),
+      });
+    }).catch((error: unknown) => {
+      this.resetToIdle();
+      this.showToast(error instanceof Error ? `Catch could not be saved: ${error.message}` : 'Catch could not be saved', '#ff9a8a', 2800);
+    });
+  }
+
+  private recordEscape(): void {
+    void recordEscapeOnline().then(
+      () => {
+        store.data.stats.escapes++;
+      },
+      (error: unknown) => this.showToast(error instanceof Error ? `Escape could not be saved: ${error.message}` : 'Escape could not be saved', '#ff9a8a'),
+    );
   }
 
   private showCatchPopup(
@@ -700,9 +1054,10 @@ export class FishingScene extends Phaser.Scene {
       net.onChat((id, _name, text) => id === net.selfId && this.selfBubble?.show(text, this.now(), 5000)),
     );
 
-    if (net.enabled && getOnline()) {
+    const token = getGameToken();
+    if (net.enabled && token) {
       net.setPositionProvider(() => ({ x: this.px, y: this.py }));
-      void net.join({ mapId: this.map.id, code: getCode(), name: getName(), x: this.px, y: this.py });
+      void net.join({ mapId: this.map.id, code: '', token, x: this.px, y: this.py });
     } else {
       net.leave();
     }
@@ -728,9 +1083,7 @@ export class FishingScene extends Phaser.Scene {
       this.netText.setText('');
       return;
     }
-    if (!getOnline()) {
-      this.netText.setText('Offline').setColor('#cdb98f');
-    } else if (net.status === 'online') {
+    if (net.status === 'online') {
       const ping = net.rtt ? `  ${net.rtt}ms` : '';
       this.netText.setText(`Online: ${net.playerCount} here${ping}`).setColor('#a6e36a');
     } else if (net.status === 'connecting') {
@@ -741,6 +1094,10 @@ export class FishingScene extends Phaser.Scene {
   }
 
   private onKeyDown(ev: KeyboardEvent): void {
+    if (this.modal) {
+      this.modal.panel.key(ev.code);
+      return;
+    }
     if (this.chatInput || !net.online) return;
     if (ev.code === 'Enter' || ev.code === 'NumpadEnter') this.openChat();
     const n = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(ev.code);
@@ -907,22 +1264,39 @@ export class FishingScene extends Phaser.Scene {
     const into = d.xp - xpForLevel(level);
     const need = xpForLevel(level + 1) - xpForLevel(level);
     const bait = BAIT_BY_ID[d.baitId] ?? BAIT_BY_ID.dough;
-    const left = bait.id === 'dough' ? '' : ` x${d.bait[bait.id] ?? 0}`;
 
-    this.hudTop.setText(`${this.map.name}   Lv ${level} (${into}/${need})   $${d.coins}`);
     const hh = String(Math.floor(hour)).padStart(2, '0');
-    this.hudBottom.setText(
-      `${hh}:00 ${timeOfDay(hour)}, ${weatherAt(world)}   ${currentRod(d).name}   Bait: ${bait.name}${left}   Bag ${d.inventory.length}`,
+    this.hud.update(
+      {
+        mapName: this.map.name,
+        level,
+        xpInto: into,
+        xpNeed: need,
+        coins: d.coins,
+        clock: `${hh}:00 ${timeOfDay(hour)}, ${weatherAt(world)}`,
+        rodName: currentRod(d).name,
+        baitId: bait.id,
+        baitName: bait.name,
+        baitCount: bait.id === 'dough' ? Infinity : (d.bait[bait.id] ?? 0),
+        bagCount: d.inventory.length,
+        bagValue: bagValue(d.inventory),
+      },
+      this.vw,
+      this.vh,
     );
 
     const hints: Record<Phase, string> = {
-      idle: net.online ? 'WASD move | SPACE fish | B bait | F book | M map | 1-4 emote | ENTER chat' : 'WASD move | SPACE fish / shop | B bait | F book | M map',
+      idle: this.modal
+        ? 'UP/DOWN select | ENTER confirm | ESC close'
+        : net.online
+          ? 'WASD move | SPACE fish | E use | P boat | O tent | I bag | B bait | M map | ENTER chat'
+          : 'WASD move | SPACE fish / shop | E use | P boat | O tent | I bag | B bait | M map',
       charging: 'Release SPACE to cast!',
-      casting: '',
+      casting: this.castAnimationDone && this.baitRequestPending ? 'Confirming bait...' : '',
       waiting: 'Waiting for a bite...  (SPACE to reel in)',
       bite: 'HOOK IT! Press SPACE / click!',
       reeling: 'Hold SPACE / click to raise the bar. Keep the fish inside!',
-      result: '',
+      result: this.popupReadyAt === Number.POSITIVE_INFINITY ? 'Saving catch...' : '',
     };
     this.hint.setX(this.vw / 2);
     this.toast.setX(this.vw / 2);

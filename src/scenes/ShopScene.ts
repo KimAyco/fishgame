@@ -1,19 +1,28 @@
 import Phaser from 'phaser';
 import { BAITS, RODS } from '../data/gear';
 import { FISH_BY_ID } from '../data/fish';
-import { buyBait, buyRod, equipRod, levelOf, selectBait, sellAll } from '../logic/economy';
+import { levelOf } from '../logic/economy';
 import { RARITIES } from '../logic/fishing';
-import { persist, store } from '../save/storage';
+import {
+  buyMarketItem,
+  equipBaitOnline,
+  equipRodOnline,
+  getGameCatalog,
+  refreshPlayerSave,
+  sellBagFish,
+} from '../net/gameApi';
+import { store } from '../save/storage';
 import type { Rarity } from '../types';
 import { button, H, RARITY_COLOR, txt, W, fitMenu } from '../ui/ui';
 
-type Tab = 'sell' | 'rods' | 'bait';
+type Tab = 'sell' | 'rods' | 'bait' | 'items';
 
 export class ShopScene extends Phaser.Scene {
   private tab: Tab = 'sell';
   private content!: Phaser.GameObjects.Container;
   private hud!: Phaser.GameObjects.Text;
   private message!: Phaser.GameObjects.Text;
+  private busy = false;
 
   constructor() {
     super('Shop');
@@ -30,9 +39,10 @@ export class ShopScene extends Phaser.Scene {
     button(this, 6, 18, 50, 14, 'Sell', () => this.setTab('sell'));
     button(this, 60, 18, 50, 14, 'Rods', () => this.setTab('rods'));
     button(this, 114, 18, 50, 14, 'Bait', () => this.setTab('bait'));
-    button(this, 268, 3, 48, 14, 'Back', () => this.scene.start('Fishing', { mapId: store.data.lastMap }));
+    button(this, 268, 3, 48, 14, 'Back', () => this.scene.start('Fishing', { mapId: 'market' }));
 
     this.content = this.add.container(0, 0);
+    button(this, 168, 18, 60, 14, 'Boat / Tent', () => this.setTab('items'));
     this.render();
   }
 
@@ -46,6 +56,23 @@ export class ShopScene extends Phaser.Scene {
     this.message.setText(s).setColor(ok ? '#8aff8a' : '#ff9a8a');
   }
 
+  private async transact(action: () => Promise<void>, success: string): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    this.say('Processing…', true);
+    this.render();
+    try {
+      await action();
+      await refreshPlayerSave();
+      this.say(success, true);
+    } catch (error) {
+      this.say(error instanceof Error ? error.message : 'Market request failed');
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
   private render(): void {
     const d = store.data;
     this.hud.setText(`Lv ${levelOf(d.xp)}   $${d.coins}`);
@@ -53,7 +80,8 @@ export class ShopScene extends Phaser.Scene {
 
     if (this.tab === 'sell') this.renderSell();
     else if (this.tab === 'rods') this.renderRods();
-    else this.renderBait();
+    else if (this.tab === 'bait') this.renderBait();
+    else this.renderItems();
   }
 
   private renderSell(): void {
@@ -70,13 +98,11 @@ export class ShopScene extends Phaser.Scene {
     items.push(txt(this, 10, 124, `Worth: $${total}`, 9, '#ffd34d'));
 
     const sell = button(this, 10, 140, 100, 18, `Sell all  +$${total}`, () => {
-      if (!store.data.inventory.length) return this.say('Nothing to sell');
-      const r = sellAll(store.data);
-      persist();
-      this.say(`Sold ${r.count} fish for $${r.coins}`, true);
-      this.render();
+      void this.transact(async () => {
+        await sellBagFish();
+      }, 'Fish sold');
     });
-    sell.setEnabled(d.inventory.length > 0);
+    sell.setEnabled(d.inventory.length > 0 && !this.busy);
     items.push(sell.container);
     this.content.add(items);
   }
@@ -101,9 +127,7 @@ export class ShopScene extends Phaser.Scene {
       } else if (owned) {
         label = 'Equip';
         action = () => {
-          equipRod(store.data, rod);
-          persist();
-          this.render();
+          void this.transact(() => equipRodOnline(rod.id), `Equipped ${rod.name}`);
         };
       } else if (level < rod.minLevel) {
         label = `Lv ${rod.minLevel}`;
@@ -113,16 +137,11 @@ export class ShopScene extends Phaser.Scene {
         label = `Buy $${rod.price}`;
         enabled = d.coins >= rod.price;
         action = () => {
-          const r = buyRod(store.data, rod);
-          if (r.ok) {
-            persist();
-            this.say(`Bought ${rod.name}`, true);
-            this.render();
-          } else this.say(r.reason);
+          void this.transact(() => buyMarketItem(`rod-${rod.id}`).then(() => undefined), `Bought ${rod.name}`);
         };
       }
       const b = button(this, 236, y, 78, 16, label, action);
-      b.setEnabled(enabled);
+      b.setEnabled(enabled && !this.busy);
       items.push(b.container);
     });
     this.content.add(items);
@@ -140,25 +159,42 @@ export class ShopScene extends Phaser.Scene {
 
       if (bait.pack > 0) {
         const buy = button(this, 190, y, 60, 16, `+${bait.pack} $${bait.price}`, () => {
-          const r = buyBait(store.data, bait);
-          if (r.ok) {
-            persist();
-            this.render();
-          } else this.say(r.reason);
+          void this.transact(() => buyMarketItem(`bait-${bait.id}`).then(() => undefined), `Bought ${bait.name}`);
         });
-        buy.setEnabled(d.coins >= bait.price);
+        buy.setEnabled(d.coins >= bait.price && !this.busy);
         items.push(buy.container);
       }
       const use = button(this, 254, y, 60, 16, active ? 'In use' : 'Use', () => {
-        const r = selectBait(store.data, bait);
-        if (r.ok) {
-          persist();
-          this.render();
-        } else this.say(r.reason);
+        void this.transact(() => equipBaitOnline(bait.id), `Equipped ${bait.name}`);
       });
-      use.setEnabled(!active && (bait.id === 'dough' || (d.bait[bait.id] ?? 0) > 0));
+      use.setEnabled(!active && (bait.id === 'dough' || (d.bait[bait.id] ?? 0) > 0) && !this.busy);
       items.push(use.container);
     });
+    this.content.add(items);
+  }
+
+  private renderItems(): void {
+    const d = store.data;
+    const items: Phaser.GameObjects.GameObject[] = [];
+    getGameCatalog()
+      .marketItems.filter((item) => item.kind === 'boat' || item.kind === 'tent')
+      .forEach((item, index) => {
+        const y = 44 + index * 42;
+        const owned = d.placeables.some((placeable) => placeable.kind === item.kind);
+        items.push(txt(this, 10, y, item.name, 9, '#ffe9c4'));
+        items.push(txt(this, 10, y + 13, item.description, 7, '#c8d0d8'));
+        const purchase = button(
+          this,
+          230,
+          y + 4,
+          80,
+          18,
+          owned ? 'Owned' : `Buy $${item.price}`,
+          () => void this.transact(() => buyMarketItem(item.id).then(() => undefined), `Bought ${item.name}`),
+        );
+        purchase.setEnabled(!owned && d.coins >= item.price && !this.busy);
+        items.push(purchase.container);
+      });
     this.content.add(items);
   }
 }

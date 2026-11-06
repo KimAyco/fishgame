@@ -29,6 +29,19 @@ export function txt(
     .setOrigin(originX, originY);
 }
 
+/** A framed panel in the game's wood-and-brass style (same look as the catch popup). */
+export function drawPanel(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, alpha = 0.92): void {
+  g.fillStyle(0x3b2818, alpha).fillRect(x, y, w, h);
+  g.lineStyle(1, 0xd9b074, 1).strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+}
+
+/** A thin progress bar; `frac` is clamped to 0..1. */
+export function drawBar(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, frac: number, color: number): void {
+  g.fillStyle(0x1a110a, 1).fillRect(x, y, w, h);
+  g.fillStyle(color, 1).fillRect(x, y, Math.round(w * Math.min(1, Math.max(0, frac))), h);
+  g.lineStyle(1, 0x7a5a36, 1).strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+}
+
 export interface Button {
   container: Phaser.GameObjects.Container;
   setLabel(s: string): void;
@@ -43,10 +56,11 @@ export function button(
   h: number,
   label: string,
   onClick: () => void,
+  fontSize = 8,
 ): Button {
   const bg = scene.add.rectangle(0, 0, w, h, 0x6b4a2a).setStrokeStyle(1, 0xd9b074);
   const text = scene.add
-    .text(0, 0, label, { fontFamily: FONT, fontSize: '8px', color: '#fff4d6' })
+    .text(0, 0, label, { fontFamily: FONT, fontSize: `${fontSize}px`, color: '#fff4d6' })
     .setResolution(scene.cameras.main.zoom)
     .setOrigin(0.5);
   const container = scene.add.container(x + w / 2, y + h / 2, [bg, text]);

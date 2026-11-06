@@ -20,7 +20,7 @@ export interface PlayerState {
 export interface JoinOptions {
   mapId: string;
   code: string;
-  name: string;
+  token: string;
   x: number;
   y: number;
 }
