@@ -3,9 +3,12 @@ import { FISH } from '../data/fish';
 import { FISH_ART, FishArt, FishShape } from '../data/fishArt';
 import { lerpColor } from '../ui/ui';
 
-/** Sprite canvas in game pixels; fish face right. */
-export const FISH_W = 56;
-export const FISH_H = 28;
+/** Square sprite canvas in game pixels; the current fish artwork stays centered within it. */
+export const FISH_W = 96;
+export const FISH_H = 96;
+const ART_W = 56;
+const ART_H = 28;
+const ART_Y_OFFSET = (FISH_H - ART_H) / 2;
 
 const OUTLINE = 0x1b1712;
 const SILHOUETTE = 0x3f3424;
@@ -22,13 +25,17 @@ class Canvas {
 
   /** Colour at a pixel, or -1 when empty or out of range. */
   get(x: number, y: number): number {
-    return x < 0 || y < 0 || x >= FISH_W || y >= FISH_H ? -1 : this.px[y * FISH_W + x];
+    return x < 0 || y < 0 || x >= ART_W || y >= ART_H
+      ? -1
+      : this.px[(y + ART_Y_OFFSET) * FISH_W + x];
   }
 
   set(x: number, y: number, color: number): void {
     const ix = Math.round(x);
     const iy = Math.round(y);
-    if (ix >= 1 && iy >= 1 && ix < FISH_W - 1 && iy < FISH_H - 1) this.px[iy * FISH_W + ix] = color;
+    if (ix >= 1 && iy >= 1 && ix < ART_W - 1 && iy < ART_H - 1) {
+      this.px[(iy + ART_Y_OFFSET) * FISH_W + ix] = color;
+    }
   }
 
   rect(x: number, y: number, w: number, h: number, color: number): void {
@@ -78,10 +85,12 @@ class Canvas {
   /** Adds a 1px dark outline around everything drawn so far. */
   outline(): void {
     const add: number[] = [];
-    for (let y = 0; y < FISH_H; y++) {
-      for (let x = 0; x < FISH_W; x++) {
+    for (let y = 0; y < ART_H; y++) {
+      for (let x = 0; x < ART_W; x++) {
         if (this.get(x, y) !== -1) continue;
-        if (this.get(x + 1, y) !== -1 || this.get(x - 1, y) !== -1 || this.get(x, y + 1) !== -1 || this.get(x, y - 1) !== -1) add.push(y * FISH_W + x);
+        if (this.get(x + 1, y) !== -1 || this.get(x - 1, y) !== -1 || this.get(x, y + 1) !== -1 || this.get(x, y - 1) !== -1) {
+          add.push((y + ART_Y_OFFSET) * FISH_W + x);
+        }
       }
     }
     for (const i of add) this.px[i] = OUTLINE;

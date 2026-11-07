@@ -4,6 +4,9 @@ A top-down pixel-art fishing game in the browser (TypeScript, Phaser 3, Vite). W
 maps, cast and reel in 24 kinds of fish, sell them, upgrade your gear, and fish together with friends
 over a realtime Colyseus server.
 
+Fish sprites use a 96 x 96 transparent canvas, with the current 56 x 28 artwork centered to leave
+room for future body, head, fin, and pattern detail.
+
 ## Play locally
 
     npm install
